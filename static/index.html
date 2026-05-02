@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Blend Seguros — Corretor</title>
+<style>
+  :root {
+    --azul:     #1a4fa0;
+    --azul-claro: #2563eb;
+    --verde:    #16a34a;
+    --cinza:    #f1f5f9;
+    --borda:    #e2e8f0;
+    --texto:    #1e293b;
+    --muted:    #64748b;
+    --azos:     #7c3aed;
+    --mag:      #0ea5e9;
+    --omint:    #f59e0b;
+    --centauro: #ef4444;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--cinza); color: var(--texto); }
+
+  header { background: var(--azul); color: white; padding: 16px 32px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.25rem; font-weight: 700; }
+  header span { font-size: 0.8rem; opacity: .7; }
+
+  .container { max-width: 1200px; margin: 0 auto; padding: 24px 16px; }
+
+  /* ── Cards de seções ── */
+  .card { background: white; border-radius: 12px; border: 1px solid var(--borda); padding: 24px; margin-bottom: 24px; }
+  .card h2 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: var(--azul); display: flex; align-items: center; gap: 8px; }
+
+  /* ── Formulário de dados ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+  @media(max-width:600px){ .grid-2,.grid-3{ grid-template-columns:1fr; } }
+  label { font-size: .8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  input, select { width: 100%; padding: 8px 12px; border: 1px solid var(--borda); border-radius: 8px; font-size: .9rem; }
+  input:focus, select:focus { outline: 2px solid var(--azul-claro); border-color: transparent; }
+
+  /* ── Botões ── */
+  .btn { padding: 10px 20px; border: none; border-radius: 8px; font-size: .9rem; font-weight: 600; cursor: pointer; transition: opacity .15s; }
+  .btn:hover { opacity: .85; }
+  .btn-primary { background: var(--azul-claro); color: white; }
+  .btn-success { background: var(--verde); color: white; }
+  .btn-lg { padding: 14px 32px; font-size: 1rem; }
+
+  /* ── Progress ── */
+  .progress-wrap { margin: 12px 0; }
+  .progress-bar { height: 8px; background: var(--borda); border-radius: 99px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--azul-claro); border-radius: 99px; transition: width .4s; }
+  .progress-msg { font-size: .8rem; color: var(--muted); margin-top: 6px; }
+
+  /* ── Status por seguradora ── */
+  .seguradoras-status { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-top: 12px; }
+  @media(max-width:700px){ .seguradoras-status{ grid-template-columns:1fr 1fr; } }
+  .seg-card { border-radius: 10px; padding: 14px; text-align: center; border: 2px solid transparent; }
+  .seg-card.azos     { background: #ede9fe; border-color: var(--azos); }
+  .seg-card.mag      { background: #e0f2fe; border-color: var(--mag); }
+  .seg-card.omint    { background: #fef3c7; border-color: var(--omint); }
+  .seg-card.centauro { background: #fee2e2; border-color: var(--centauro); }
+  .seg-card .seg-nome { font-weight: 700; font-size: .85rem; margin-bottom: 4px; }
+  .seg-card .seg-status { font-size: .75rem; color: var(--muted); }
+  .seg-card .seg-count { font-size: 1.4rem; font-weight: 800; }
+  .seg-card.azos .seg-count { color: var(--azos); }
+  .seg-card.mag .seg-count  { color: var(--mag); }
+  .seg-card.omint .seg-count { color: var(--omint); }
+  .seg-card.centauro .seg-count { color: var(--centauro); }
+
+  /* ── Tabela de coberturas ── */
+  .blend-grid { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th { background: var(--cinza); padding: 10px 12px; text-align: left; font-weight: 600; font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--borda); }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--borda); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--cinza); }
+
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: .72rem; font-weight: 700; }
+  .badge-azos     { background: #ede9fe; color: var(--azos); }
+  .badge-mag      { background: #e0f2fe; color: #0369a1; }
+  .badge-omint    { background: #fef3c7; color: #b45309; }
+  .badge-centauro { background: #fee2e2; color: #b91c1c; }
+
+  .valor-input { width: 120px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 6px; font-size: .85rem; }
+  .check-select { width: 18px; height: 18px; cursor: pointer; accent-color: var(--azul-claro); }
+
+  /* ── Resumo blend ── */
+  .resumo { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+  .resumo-item { text-align: center; }
+  .resumo-item .num { font-size: 1.6rem; font-weight: 800; color: var(--azul-claro); }
+  .resumo-item .label { font-size: .75rem; color: var(--muted); }
+
+  /* ── Resultados finais ── */
+  .resultado-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px,1fr)); gap: 16px; }
+  .resultado-card { border-radius: 10px; padding: 16px; border: 1px solid var(--borda); }
+  .resultado-card .seg { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 6px; }
+  .resultado-card .cob { font-weight: 600; margin-bottom: 4px; }
+  .resultado-card .premio { font-size: 1.3rem; font-weight: 800; color: var(--verde); }
+  .resultado-card .capital { font-size: .8rem; color: var(--muted); }
+  .resultado-card a { font-size: .8rem; color: var(--azul-claro); text-decoration: none; }
+  .resultado-card .erro-txt { font-size: .8rem; color: #dc2626; }
+
+  /* ── Utility ── */
+  .hidden { display: none !important; }
+  .mt-8 { margin-top: 8px; }
+  .mt-16 { margin-top: 16px; }
+  .text-muted { color: var(--muted); font-size: .85rem; }
+  .alert { padding: 12px 16px; border-radius: 8px; font-size: .85rem; margin-bottom: 16px; }
+  .alert-info { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+  .alert-success { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+</style>
+</head>
+<body>
+
+<header>
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+  </svg>
+  <div>
+    <h1>Blend Seguros</h1>
+    <span>Cotação multi-seguradora para corretores</span>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- ── PASSO 1: Dados do cliente ── -->
+  <div class="card" id="sec-dados">
+    <h2>📋 Dados do Cliente</h2>
+    <form id="form-cotar">
+      <div class="grid-3">
+        <div>
+          <label>Nome completo *</label>
+          <input name="nome" required placeholder="Ex: João da Silva"/>
+        </div>
+        <div>
+          <label>CPF</label>
+          <input name="cpf" placeholder="000.000.000-00"/>
+        </div>
+        <div>
+          <label>Data de nascimento *</label>
+          <input name="nascimento" required placeholder="DD/MM/AAAA"/>
+        </div>
+      </div>
+      <div class="grid-3 mt-8">
+        <div>
+          <label>E-mail</label>
+          <input name="email" type="email" placeholder="email@exemplo.com"/>
+        </div>
+        <div>
+          <label>Telefone</label>
+          <input name="telefone" placeholder="(11) 99999-9999"/>
+        </div>
+        <div>
+          <label>Renda mensal (R$)</label>
+          <input name="renda" type="number" value="5000" min="1000"/>
+        </div>
+      </div>
+      <div class="mt-16" style="display:flex;justify-content:flex-end">
+        <button type="submit" class="btn btn-primary btn-lg">
+          🔍 Buscar coberturas em todas as seguradoras
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- ── PASSO 2: Progresso ── -->
+  <div class="card hidden" id="sec-progresso">
+    <h2>⏳ Coletando coberturas...</h2>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="prog-fill" style="width:0%"></div></div>
+      <div class="progress-msg" id="prog-msg">Iniciando...</div>
+    </div>
+    <div class="seguradoras-status mt-16">
+      <div class="seg-card azos" id="seg-azos">
+        <div class="seg-nome">AZOS</div>
+        <div class="seg-count" id="cnt-azos">—</div>
+        <div class="seg-status" id="st-azos">aguardando</div>
+      </div>
+      <div class="seg-card mag" id="seg-mag">
+        <div class="seg-nome">MAG</div>
+        <div class="seg-count" id="cnt-mag">—</div>
+        <div class="seg-status" id="st-mag">aguardando</div>
+      </div>
+      <div class="seg-card omint" id="seg-omint">
+        <div class="seg-nome">OMINT</div>
+        <div class="seg-count" id="cnt-omint">—</div>
+        <div class="seg-status" id="st-omint">aguardando</div>
+      </div>
+      <div class="seg-card centauro" id="seg-centauro">
+        <div class="seg-nome">CENTAURO</div>
+        <div class="seg-count" id="cnt-centauro">—</div>
+        <div class="seg-status" id="st-centauro">aguardando</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── PASSO 3: Monte o blend ── -->
+  <div class="card hidden" id="sec-blend">
+    <h2>🧩 Monte o Blend</h2>
+    <div class="alert alert-info">
+      Selecione as coberturas desejadas de cada seguradora e defina o capital segurado.
+      O sistema finalizará as cotações nas seguradoras selecionadas.
+    </div>
+
+    <div class="blend-grid">
+      <table id="tabela-coberturas">
+        <thead>
+          <tr>
+            <th style="width:40px"></th>
+            <th>Cobertura</th>
+            <th>Seguradora</th>
+            <th>Capital mín.</th>
+            <th>Capital máx.</th>
+            <th>Prêmio ref.</th>
+            <th style="width:140px">Capital desejado</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-coberturas"></tbody>
+      </table>
+    </div>
+
+    <div class="mt-16" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div class="resumo" id="resumo-blend">
+        <div class="resumo-item">
+          <div class="num" id="res-count">0</div>
+          <div class="label">coberturas</div>
+        </div>
+        <div class="resumo-item">
+          <div class="num" id="res-segs">0</div>
+          <div class="label">seguradoras</div>
+        </div>
+        <div class="resumo-item">
+          <div class="num" id="res-premio">R$ 0</div>
+          <div class="label">prêmio ref./mês</div>
+        </div>
+      </div>
+      <button class="btn btn-success btn-lg" id="btn-finalizar" onclick="finalizarBlend()">
+        ✅ Finalizar cotações do blend
+      </button>
+    </div>
+  </div>
+
+  <!-- ── PASSO 4: Finalizando ── -->
+  <div class="card hidden" id="sec-finalizando">
+    <h2>🚀 Finalizando cotações...</h2>
+    <div class="progress-wrap">
+      <div class="progress-bar"><div class="progress-fill" id="prog-fill2" style="width:60%"></div></div>
+      <div class="progress-msg" id="prog-msg2">Enviando seleções às seguradoras...</div>
+    </div>
+  </div>
+
+  <!-- ── PASSO 5: Resultado ── -->
+  <div class="card hidden" id="sec-resultado">
+    <h2>🎉 Blend Finalizado</h2>
+    <div class="alert alert-success" id="alerta-resultado"></div>
+    <div class="resultado-grid" id="grid-resultado"></div>
+    <div class="mt-16" style="text-align:center">
+      <button class="btn btn-primary" onclick="location.reload()">Nova cotação</button>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+let JOB_ID = null;
+let COBERTURAS_DATA = {};
+let POLL_INTERVAL = null;
+
+// ── Formulário: inicia coleta ─────────────────────────────────────────────────
+document.getElementById('form-cotar').addEventListener('submit', async e => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  show('sec-progresso');
+  hide('sec-dados');
+
+  const resp = await fetch('/cotar', {method:'POST', body: fd});
+  const data = await resp.json();
+  JOB_ID = data.job_id;
+
+  POLL_INTERVAL = setInterval(pollStatus, 2500);
+});
+
+// ── Poll status até fase1_ok ──────────────────────────────────────────────────
+async function pollStatus() {
+  if (!JOB_ID) return;
+  const r = await fetch(`/status/${JOB_ID}`).then(r => r.json());
+
+  setf('prog-fill', `width:${r.pct}%`);
+  document.getElementById('prog-msg').textContent = r.msg || '';
+
+  if (r.status === 'fase1_ok') {
+    clearInterval(POLL_INTERVAL);
+    await carregarCoberturas();
+  } else if (r.status === 'erro') {
+    clearInterval(POLL_INTERVAL);
+    document.getElementById('prog-msg').textContent = '❌ Erro: ' + r.erro;
+  }
+}
+
+// ── Carrega e exibe coberturas ─────────────────────────────────────────────────
+async function carregarCoberturas() {
+  COBERTURAS_DATA = await fetch(`/coberturas/${JOB_ID}`).then(r => r.json());
+
+  const tbody = document.getElementById('tbody-coberturas');
+  tbody.innerHTML = '';
+
+  for (const [seg, info] of Object.entries(COBERTURAS_DATA)) {
+    // Atualiza cards de status
+    const cnt = info.coberturas?.length || 0;
+    document.getElementById(`cnt-${seg}`).textContent = cnt;
+    document.getElementById(`st-${seg}`).textContent = info.ok ? `${cnt} coberturas` : ('❌ ' + (info.erro || 'erro'));
+
+    if (!info.ok || !info.coberturas?.length) continue;
+
+    for (const cob of info.coberturas) {
+      const tr = document.createElement('tr');
+      tr.dataset.seg = seg;
+      tr.dataset.cobId = cob.id;
+      tr.dataset.sessionId = info.session_id || '';
+      tr.dataset.nome = cob.nome;
+      tr.dataset.valorMin = cob.valor_min;
+      tr.dataset.premioRef = cob.premio_referencia || 0;
+      tr.innerHTML = `
+        <td><input type="checkbox" class="check-select" onchange="atualizarResumo()"/></td>
+        <td><strong>${cob.nome}</strong></td>
+        <td><span class="badge badge-${seg}">${seg.toUpperCase()}</span></td>
+        <td>${fmt(cob.valor_min)}</td>
+        <td>${fmt(cob.valor_max)}</td>
+        <td>${cob.premio_referencia ? 'R$ ' + cob.premio_referencia.toFixed(2) + '/mês' : '—'}</td>
+        <td>
+          <input type="number" class="valor-input capital-input"
+            value="${Math.round(cob.valor_min)}"
+            min="${cob.valor_min}" max="${cob.valor_max}" step="10000"
+            onchange="atualizarResumo()"/>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  hide('sec-progresso');
+  show('sec-blend');
+  atualizarResumo();
+}
+
+// ── Resumo dinâmico ────────────────────────────────────────────────────────────
+function atualizarResumo() {
+  const linhas = [...document.querySelectorAll('#tbody-coberturas tr')];
+  const selecionadas = linhas.filter(tr => tr.querySelector('.check-select').checked);
+  const segs = new Set(selecionadas.map(tr => tr.dataset.seg));
+  const premioTotal = selecionadas.reduce((s, tr) => {
+    return s + parseFloat(tr.dataset.premioRef || 0);
+  }, 0);
+
+  document.getElementById('res-count').textContent = selecionadas.length;
+  document.getElementById('res-segs').textContent  = segs.size;
+  document.getElementById('res-premio').textContent = 'R$ ' + premioTotal.toFixed(2);
+}
+
+// ── Finalizar blend ────────────────────────────────────────────────────────────
+async function finalizarBlend() {
+  const linhas = [...document.querySelectorAll('#tbody-coberturas tr')];
+  const selecionadas = linhas.filter(tr => tr.querySelector('.check-select').checked);
+
+  if (!selecionadas.length) {
+    alert('Selecione ao menos uma cobertura para o blend.');
+    return;
+  }
+
+  const selecoes = selecionadas.map(tr => ({
+    seguradora:  tr.dataset.seg,
+    session_id:  tr.dataset.sessionId,
+    nome:        tr.dataset.nome,
+    valor:       parseFloat(tr.querySelector('.capital-input').value),
+  }));
+
+  hide('sec-blend');
+  show('sec-finalizando');
+
+  const fd = new FormData();
+  fd.append('selecoes', JSON.stringify(selecoes));
+  await fetch(`/finalizar/${JOB_ID}`, {method:'POST', body: fd});
+
+  POLL_INTERVAL = setInterval(pollResultado, 3000);
+}
+
+// ── Poll resultado ────────────────────────────────────────────────────────────
+async function pollResultado() {
+  const r = await fetch(`/status/${JOB_ID}`).then(r => r.json());
+  document.getElementById('prog-fill2').style.width = r.pct + '%';
+  document.getElementById('prog-msg2').textContent = r.msg || '';
+
+  if (r.status === 'finalizado') {
+    clearInterval(POLL_INTERVAL);
+    await exibirResultado();
+  }
+}
+
+async function exibirResultado() {
+  const data = await fetch(`/resultado/${JOB_ID}`).then(r => r.json());
+
+  const grid = document.getElementById('grid-resultado');
+  grid.innerHTML = '';
+
+  let premioTotal = 0;
+  for (const c of data.cotacoes) {
+    premioTotal += c.premio_mensal || 0;
+    const div = document.createElement('div');
+    div.className = 'resultado-card';
+    div.innerHTML = `
+      <div class="seg"><span class="badge badge-${c.seguradora}">${c.seguradora.toUpperCase()}</span></div>
+      <div class="cob">${c.cobertura_nome}</div>
+      <div class="capital">Capital: ${fmt(c.valor_capital)}</div>
+      ${c.erro
+        ? `<div class="erro-txt">❌ ${c.erro}</div>`
+        : `<div class="premio">R$ ${(c.premio_mensal||0).toFixed(2)}<span style="font-size:.7rem;font-weight:400">/mês</span></div>`
+      }
+      ${c.link_proposta ? `<a href="${c.link_proposta}" target="_blank">Ver proposta →</a>` : ''}`;
+    grid.appendChild(div);
+  }
+
+  document.getElementById('alerta-resultado').textContent =
+    `✅ Blend finalizado com ${data.cotacoes.length} coberturas — Prêmio total estimado: R$ ${premioTotal.toFixed(2)}/mês`;
+
+  hide('sec-finalizando');
+  show('sec-resultado');
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function show(id){ document.getElementById(id).classList.remove('hidden'); }
+function hide(id){ document.getElementById(id).classList.add('hidden'); }
+function setf(id, s){ document.getElementById(id).style.cssText = s; }
+function fmt(v){ return v ? 'R$ ' + Number(v).toLocaleString('pt-BR') : '—'; }
+</script>
+</body>
+</html>
