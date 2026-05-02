@@ -64,12 +64,27 @@ async def _login(page: Page):
 
 
 async def _navegar_simulacao(page: Page, dados: dict):
-    for txt in ["Cotar", "Simular", "Nova cotação", "Seguro de Vida", "Vida"]:
-        btn = page.locator(f'a:has-text("{txt}"), button:has-text("{txt}")').first
-        if await btn.count():
-            await btn.click()
+    # "Vida Individual" está em dropdown AngularJS — hover no menu pai para revelar
+    vida = page.locator('a:has-text("Vida Individual")').first
+    if await vida.count():
+        # Sobe para o <li> pai e faz hover para abrir o dropdown
+        pai = page.locator('li:has(a:has-text("Vida Individual"))').first
+        if await pai.count():
+            await pai.hover()
+            await page.wait_for_timeout(800)
+        try:
+            await vida.click(timeout=5000)
             await page.wait_for_timeout(2000)
-            break
+        except Exception:
+            await vida.click(force=True)
+            await page.wait_for_timeout(2000)
+    else:
+        for txt in ["Cotar", "Simular", "Nova cotação", "Seguro de Vida", "Vida"]:
+            btn = page.locator(f'a:has-text("{txt}"), button:has-text("{txt}")').first
+            if await btn.count():
+                await btn.click()
+                await page.wait_for_timeout(2000)
+                break
 
     campos = [
         (['input[name="nome"]', 'input[placeholder*="nome" i]'],   dados.get("nome", "")),

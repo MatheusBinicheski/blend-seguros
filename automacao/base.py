@@ -14,12 +14,18 @@ async def novo_browser(headless: bool = True) -> tuple[object, Browser, BrowserC
     ctx = await browser.new_context(
         viewport={"width": 1280, "height": 900},
         user_agent=(
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
+            "Chrome/124.0.0.0 Safari/537.36"
         ),
         locale="pt-BR",
     )
+    await ctx.add_init_script("""
+        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+        Object.defineProperty(navigator, 'plugins',   {get: () => [1, 2, 3, 4, 5]});
+        Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US']});
+        window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+    """)
     page = await ctx.new_page()
     return pw, browser, ctx, page
 

@@ -40,21 +40,19 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _login(page: Page):
-    # Preenche CNPJ/usuário
-    for sel in ['input[name="cnpj"]', 'input[name="usuario"]', 'input[type="text"]']:
-        inp = page.locator(sel).first
-        if await inp.count():
-            await inp.fill(CNPJ)
+    # Redireciona para identidade.mag.com.br — campos name=Username e name=Password
+    await page.wait_for_selector('input[name="Username"]', timeout=15_000)
+    await page.fill('input[name="Username"]', CNPJ)
+    await page.fill('input[name="Password"]', SENHA)
+
+    for sel in ['button:has-text("ACESSAR")', 'button[type="submit"]', 'input[type="submit"]']:
+        btn = page.locator(sel).first
+        if await btn.count():
+            await btn.click()
             break
 
-    for sel in ['input[name="senha"]', 'input[name="password"]', 'input[type="password"]']:
-        inp = page.locator(sel).first
-        if await inp.count():
-            await inp.fill(SENHA)
-            break
-
-    await page.keyboard.press("Enter")
-    await page.wait_for_timeout(3000)
+    # Aguarda redirect para o portal do produtor
+    await page.wait_for_url("**/plataformadosprodutores**", timeout=30_000)
 
 
 async def _navegar_simulacao(page: Page, dados: dict):

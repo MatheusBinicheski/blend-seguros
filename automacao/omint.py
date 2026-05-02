@@ -38,27 +38,21 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _login(page: Page):
-    for sel in ['input[name="usuario"]', 'input[name="login"]', 'input[type="text"]']:
-        inp = page.locator(sel).first
-        if await inp.count():
-            await inp.fill(USUARIO)
-            break
+    # A página redireciona para /corretores/login.php
+    await page.wait_for_selector('input[name="email"]', timeout=10_000)
+    await page.fill('input[name="email"]', USUARIO)
+    await page.fill('input[name="password"]', SENHA)
 
-    for sel in ['input[name="senha"]', 'input[type="password"]']:
-        inp = page.locator(sel).first
-        if await inp.count():
-            await inp.fill(SENHA)
-            break
-
-    for sel in ['button[type="submit"]', 'button:has-text("Entrar")', 'input[type="submit"]']:
+    for sel in ['button:has-text("ACESSAR")', 'button[type="submit"]', 'input[type="submit"]']:
         btn = page.locator(sel).first
         if await btn.count():
             await btn.click()
             break
-    else:
-        await page.keyboard.press("Enter")
 
-    await page.wait_for_timeout(3000)
+    # Aguarda sair da página de login
+    await page.wait_for_function(
+        "() => !window.location.href.includes('login')", timeout=20_000
+    )
 
 
 async def _navegar_simulacao(page: Page, dados: dict):

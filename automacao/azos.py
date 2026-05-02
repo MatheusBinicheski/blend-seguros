@@ -26,60 +26,41 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
     try:
         print(f"[azos] iniciando fase1 session={session_id}", flush=True)
 
-        # Login
+        # Login — aguarda form estar pronto antes de preencher
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
-        await page.wait_for_timeout(2000)
-
-        for sel in ['input[name="email"]', 'input[type="email"]', 'input[placeholder*="e-mail" i]']:
-            el = page.locator(sel).first
-            if await el.count():
-                await el.fill(EMAIL)
-                break
-
-        for sel in ['input[name="password"]', 'input[type="password"]']:
-            el = page.locator(sel).first
-            if await el.count():
-                await el.fill(SENHA)
-                break
-
-        await page.wait_for_timeout(500)
-
-        # Clica no botão de submit explicitamente (evita form GET com creds na URL)
-        clicked = False
-        for sel in ['button[type="submit"]', 'button:has-text("Entrar")', 'button:has-text("Login")',
-                    'button:has-text("Acessar")', 'input[type="submit"]']:
-            btn = page.locator(sel).first
-            if await btn.count():
-                await btn.click()
-                clicked = True
-                break
-        if not clicked:
-            await page.keyboard.press("Enter")
-
-        await page.wait_for_url("**/dashboard**", timeout=45_000)
+        await page.wait_for_selector('input[name="email"]', timeout=15_000)
+        await page.fill('input[name="email"]', EMAIL)
+        await page.fill('input[name="password"]', SENHA)
+        await page.click('button[type="submit"]')
+        await page.wait_for_timeout(1000)
+        await page.wait_for_url("**/dashboard**", timeout=30_000)
         print(f"[azos] login ok", flush=True)
 
         # Navegação para simulação
         await page.goto(URL_SIM, wait_until="domcontentloaded", timeout=30_000)
         await page.wait_for_timeout(1500)
 
-        # Clica "Novo cliente" se existir
-        try:
-            btn_novo = page.locator('button:has-text("Novo cliente"), button:has-text("Nova simulação")')
-            if await btn_novo.count():
-                await btn_novo.first.click()
-                await page.wait_for_timeout(1000)
-        except Exception:
-            pass
+        # Seleciona "Novo cliente" (é um elemento de texto, não um <button>)
+        await page.locator('text="Novo cliente"').click()
+        await page.wait_for_timeout(800)
 
         # Preenche dados pessoais
         await _preencher_dados_pessoais(page, dados)
-        await clicar_continuar(page)
-        await page.wait_for_url("**/coberturas**", timeout=20_000)
+
+        # Avança para coberturas
+        await page.locator('button:has-text("Continuar")').click()
+        await page.wait_for_timeout(4000)
+        await page.wait_for_load_state("domcontentloaded", timeout=20_000)
         await page.wait_for_timeout(1500)
 
+        # Aguarda React renderizar os cards de cobertura
+        try:
+            await page.wait_for_selector('button[role="switch"]', timeout=10_000)
+        except Exception:
+            pass
+
         coberturas = await _extrair_coberturas(page)
-        print(f"[azos] {len(coberturas)} coberturas extraídas", flush=True)
+        print(f"[azos] {len(coberturas)} coberturas extraídas | url={page.url}", flush=True)
 
         # Guarda sessão para fase 2
         _SESSOES[session_id] = {
