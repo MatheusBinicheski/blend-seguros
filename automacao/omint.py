@@ -5,7 +5,7 @@ from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, clicar_continuar
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
-URL_LOGIN = "https://athena.omint.com.br/"
+URL_LOGIN = "https://www.omint.com.br/corretores/"
 USUARIO = os.getenv("OMINT_USUARIO", "")
 SENHA   = os.getenv("OMINT_SENHA", "")
 

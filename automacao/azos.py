@@ -28,10 +28,35 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
         # Login
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
-        await page.fill('input[name="email"], input[type="email"]', EMAIL)
-        await page.fill('input[name="password"], input[type="password"]', SENHA)
-        await page.keyboard.press("Enter")
-        await page.wait_for_url("**/dashboard**", timeout=30_000)
+        await page.wait_for_timeout(2000)
+
+        for sel in ['input[name="email"]', 'input[type="email"]', 'input[placeholder*="e-mail" i]']:
+            el = page.locator(sel).first
+            if await el.count():
+                await el.fill(EMAIL)
+                break
+
+        for sel in ['input[name="password"]', 'input[type="password"]']:
+            el = page.locator(sel).first
+            if await el.count():
+                await el.fill(SENHA)
+                break
+
+        await page.wait_for_timeout(500)
+
+        # Clica no botão de submit explicitamente (evita form GET com creds na URL)
+        clicked = False
+        for sel in ['button[type="submit"]', 'button:has-text("Entrar")', 'button:has-text("Login")',
+                    'button:has-text("Acessar")', 'input[type="submit"]']:
+            btn = page.locator(sel).first
+            if await btn.count():
+                await btn.click()
+                clicked = True
+                break
+        if not clicked:
+            await page.keyboard.press("Enter")
+
+        await page.wait_for_url("**/dashboard**", timeout=45_000)
         print(f"[azos] login ok", flush=True)
 
         # Navegação para simulação

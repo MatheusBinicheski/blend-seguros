@@ -5,7 +5,7 @@ from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
-URL_LOGIN = "https://vendadigital.mag.com.br/"
+URL_LOGIN = "https://canaldocorretor.mag.com.br/canal-do-corretor/login.htm"
 CNPJ  = os.getenv("MAG_CNPJ", "")
 SENHA = os.getenv("MAG_SENHA", "")
 

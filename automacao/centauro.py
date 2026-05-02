@@ -5,7 +5,7 @@ from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, clicar_continuar
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
-URL_LOGIN = "https://on.centauro.com.br/"
+URL_LOGIN = "https://centauro-online.centauro-on.com.br/"
 USUARIO = os.getenv("CENTAURO_USUARIO", "")
 SENHA   = os.getenv("CENTAURO_SENHA", "")
 
