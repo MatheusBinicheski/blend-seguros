@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, re
 from playwright.async_api import Page
-from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario
+from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario, resolver_captcha
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
 URL_LOGIN = "https://canaldocorretor.mag.com.br/canal-do-corretor/login.htm"
@@ -44,6 +44,7 @@ async def _login(page: Page):
     await page.wait_for_selector('input[name="Username"]', timeout=15_000)
     await page.fill('input[name="Username"]', CNPJ)
     await page.fill('input[name="Password"]', SENHA)
+    await resolver_captcha(page)
 
     for sel in ['button:has-text("ACESSAR")', 'button[type="submit"]', 'input[type="submit"]']:
         btn = page.locator(sel).first

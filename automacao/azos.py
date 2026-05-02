@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, re, asyncio
 from playwright.async_api import Page
-from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario
+from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario, resolver_captcha
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
 URL_LOGIN = "https://corretores.azos.com.br/login"
@@ -31,6 +31,7 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await page.wait_for_selector('input[name="email"]', timeout=15_000)
         await page.fill('input[name="email"]', EMAIL)
         await page.fill('input[name="password"]', SENHA)
+        await resolver_captcha(page)
         await page.click('button[type="submit"]')
         await page.wait_for_timeout(1000)
         await page.wait_for_url("**/dashboard**", timeout=30_000)

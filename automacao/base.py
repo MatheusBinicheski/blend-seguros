@@ -1,7 +1,9 @@
 """Utilitários compartilhados entre os módulos de cada seguradora."""
 from __future__ import annotations
-import re
+import asyncio, os, re
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page
+
+_CAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY", "")
 
 
 async def novo_browser(headless: bool = True) -> tuple[object, Browser, BrowserContext, Page]:
@@ -28,6 +30,71 @@ async def novo_browser(headless: bool = True) -> tuple[object, Browser, BrowserC
     """)
     page = await ctx.new_page()
     return pw, browser, ctx, page
+
+
+async def resolver_captcha(page: Page) -> bool:
+    """Detecta e resolve reCAPTCHA v2 ou hCaptcha via 2captcha. Retorna True se resolveu."""
+    if not _CAPTCHA_API_KEY:
+        return False
+    try:
+        # Detecta sitekey de reCAPTCHA ou hCaptcha
+        info = await page.evaluate("""() => {
+            const rc = document.querySelector('.g-recaptcha[data-sitekey], [data-sitekey]');
+            const hc = document.querySelector('.h-captcha[data-sitekey]');
+            if (hc) return {type: 'hcaptcha', sitekey: hc.getAttribute('data-sitekey')};
+            if (rc) return {type: 'recaptcha', sitekey: rc.getAttribute('data-sitekey')};
+            // iframe reCAPTCHA embutido
+            for (const iframe of document.querySelectorAll('iframe[src*="recaptcha"]')) {
+                const m = iframe.src.match(/[?&]k=([^&]+)/);
+                if (m) return {type: 'recaptcha', sitekey: m[1]};
+            }
+            return null;
+        }""")
+        if not info or not info.get("sitekey"):
+            return False
+
+        from twocaptcha import TwoCaptcha
+        solver = TwoCaptcha(_CAPTCHA_API_KEY)
+        url = page.url
+        sitekey = info["sitekey"]
+        captcha_type = info["type"]
+        print(f"[captcha] resolvendo {captcha_type} sitekey={sitekey[:20]}... aguarde", flush=True)
+
+        if captcha_type == "hcaptcha":
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: solver.hcaptcha(sitekey=sitekey, url=url)
+            )
+        else:
+            result = await asyncio.get_event_loop().run_in_executor(
+                None, lambda: solver.recaptcha(sitekey=sitekey, url=url)
+            )
+
+        token = result["code"]
+        print(f"[captcha] token recebido ({len(token)} chars)", flush=True)
+
+        # Injeta o token na página
+        await page.evaluate(f"""(token) => {{
+            // reCAPTCHA v2
+            const resp = document.getElementById('g-recaptcha-response');
+            if (resp) {{ resp.innerHTML = token; resp.value = token; }}
+            // hCaptcha
+            const hresp = document.querySelector('[name="h-captcha-response"]');
+            if (hresp) {{ hresp.value = token; }}
+            // Callback global do reCAPTCHA
+            if (window.grecaptcha?.enterprise) {{
+                try {{ window.grecaptcha.enterprise.execute(); }} catch(e) {{}}
+            }}
+            // Tenta disparar callback registrado
+            for (const key of Object.keys(window)) {{
+                if (key.startsWith('___grecaptcha') || key === '__recaptcha_api') continue;
+            }}
+        }}""", token)
+        await page.wait_for_timeout(1000)
+        return True
+
+    except Exception as e:
+        print(f"[captcha] ERRO ao resolver: {e}", flush=True)
+        return False
 
 
 async def fechar_browser(pw, browser):
