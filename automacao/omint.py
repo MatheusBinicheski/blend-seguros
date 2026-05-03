@@ -14,7 +14,7 @@ _SESSOES: dict[str, dict] = {}
 
 
 async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> ResultadoFase1:
-    pw, browser, ctx, page = await novo_browser(headless)
+    pw, browser, ctx, page = await novo_browser(headless=False)
     session_id = "omint-" + str(id(page))
     try:
         print(f"[omint] iniciando fase1", flush=True)
@@ -70,36 +70,28 @@ async def _login(page: Page):
 
 
 async def _navegar_simulacao(page: Page, dados: dict):
-    # Navega diretamente para a página de cotação
     await page.goto(URL_COTACAO, wait_until="domcontentloaded", timeout=30_000)
-    # Aguarda o primeiro input do form (q-field__native) aparecer
     await page.wait_for_selector('input.q-field__native', timeout=10_000)
-    await page.wait_for_timeout(3000)  # aguarda inicialização + carregamento do dropdown Corretor
+    await page.wait_for_timeout(2000)
 
-    # Descarta modais de tutorial que reaparecem na navegação (force=True bypassa overlay)
-    for _ in range(10):
-        btn = page.locator('button:has-text("Avançar")').first
+    # Descarta modais de tutorial se aparecerem
+    for _ in range(8):
+        btn = page.locator('button:has-text("Avançar"), button:has-text("Fechar")').first
         if await btn.count() and await btn.is_visible():
             await btn.click(force=True)
             await page.wait_for_timeout(400)
         else:
             break
 
-    # Fecha tooltip "Nome civil" se aparecer
-    fechar = page.locator('button:has-text("Fechar")').first
-    if await fechar.count() and await fechar.is_visible():
-        await fechar.click(force=True)
-        await page.wait_for_timeout(400)
-
-    # Nome civil — primeiro input.q-field__native visível (não o search field)
+    # Nome civil — primeiro input text visível
     nome_inp = page.locator('input.q-field__native[type="text"]').first
     await nome_inp.wait_for(state="visible", timeout=10_000)
     await nome_inp.click()
     await nome_inp.press_sequentially(dados.get("nome", ""), delay=30)
     await page.keyboard.press("Tab")
-    await page.wait_for_timeout(800)
+    await page.wait_for_timeout(600)
 
-    # Nascimento — aguarda o input type="date"
+    # Nascimento (ISO yyyy-mm-dd)
     nasc_raw = dados.get("nascimento", "")
     if "/" in nasc_raw:
         d, m, y = nasc_raw.split("/")
@@ -111,16 +103,15 @@ async def _navegar_simulacao(page: Page, dados: dict):
     await nasc_inp.click()
     await nasc_inp.fill(nasc_iso)
     await page.keyboard.press("Tab")
-    await page.wait_for_timeout(800)
+    await page.wait_for_timeout(600)
 
-    # Renda — máscara monetária direita→esquerda; NÃO limpa antes, só clica e digita
-    # Para R$ 5.000,00 (5000 reais) é preciso digitar "500000" (valor em centavos)
+    # Renda — máscara direita→esquerda (centavos): 5000 reais → digita "500000"
     renda_val = dados.get("renda_mensal", "5000")
     try:
         renda_int = int(float(str(renda_val).replace(",", ".").replace(" ", "")))
     except Exception:
         renda_int = 5000
-    renda_digits = str(renda_int) + "00"  # ex.: 5000 → "500000"
+    renda_digits = str(renda_int) + "00"
 
     all_native = page.locator('input.q-field__native')
     cnt = await all_native.count()
@@ -136,90 +127,99 @@ async def _navegar_simulacao(page: Page, dados: dict):
                 await inp.press_sequentially(renda_digits, delay=50)
                 await page.keyboard.press("Tab")
                 await page.wait_for_timeout(300)
+                print(f"[omint] renda preenchida: {await inp.input_value()}", flush=True)
                 break
         except Exception:
             pass
 
-    # Gênero
+    # Gênero (pode já estar pré-selecionado; re-clicar não faz mal)
     sexo = dados.get("sexo", "M")
     sexo_label = "Feminino" if sexo.upper() in ("F", "FEMININO") else "Masculino"
     await page.locator(f'button:has-text("{sexo_label}")').first.click(force=True)
     await page.wait_for_timeout(200)
 
-    # Profissional saúde → NÃO (nth(0))
-    await page.locator('button:has-text("NÃO")').nth(0).click(force=True)
-    await page.wait_for_timeout(200)
+    # Informar contatos → NÃO (esconde campos de email/tel que são required)
+    # "SIM" vem pré-selecionado — precisa trocar para NÃO
+    nao_btns = page.locator('button:has-text("NÃO")')
+    cnt_nao = await nao_btns.count()
+    for i in range(cnt_nao):
+        btn = nao_btns.nth(i)
+        try:
+            label = await btn.evaluate("b => b.closest('.q-field, .row, div')?.querySelector('label, span.text-weight-medium')?.innerText || ''")
+        except Exception:
+            label = ""
+        txt = (await btn.inner_text()).strip()
+        if txt == "NÃO":
+            await btn.click(force=True)
+            await page.wait_for_timeout(200)
+    print(f"[omint] Informar contatos: NÃO clicado", flush=True)
 
-    # Fumante → Não Fumante
-    await page.locator('button:has-text("Não Fumante")').first.click(force=True)
-    await page.wait_for_timeout(200)
-
-    # Informar contatos → NÃO (nth(1))
+    # Corretor — só interage se ainda não tiver valor (já vem pré-carregado normalmente)
+    corretor_sel = page.locator('.q-select').first
+    corretor_txt = ""
     try:
-        await page.locator('button:has-text("NÃO")').nth(1).click(force=True)
-        await page.wait_for_timeout(200)
+        corretor_txt = await corretor_sel.inner_text()
     except Exception:
         pass
-
-    # Corretor — q-select obrigatório; sem ele o Quasar isActionable permanece false
-    corretor_sel = page.locator('.q-select').first
-    await corretor_sel.click(force=True)
-    await page.wait_for_timeout(1500)
-    opts = await page.query_selector_all('.q-menu .q-item, .q-virtual-scroll .q-item, [role="option"]')
-    if opts:
-        await opts[0].click(force=True)
-        print(f"[omint] Corretor selecionado", flush=True)
-        await page.wait_for_timeout(500)
+    if not corretor_txt.strip() or len(corretor_txt.strip()) < 3:
+        await corretor_sel.click(force=True)
+        await page.wait_for_timeout(1500)
+        opts = await page.query_selector_all('.q-menu .q-item, .q-virtual-scroll .q-item, [role="option"]')
+        if opts:
+            await opts[0].click(force=True)
+            print(f"[omint] Corretor selecionado manualmente", flush=True)
+            await page.wait_for_timeout(500)
+        else:
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(300)
     else:
-        print(f"[omint] AVISO: dropdown Corretor vazio, prosseguindo sem seleção", flush=True)
-        await page.keyboard.press("Escape")
-        await page.wait_for_timeout(300)
+        print(f"[omint] Corretor já definido: {corretor_txt.strip()[:40]}", flush=True)
 
-    # Log estado do botão para diagnóstico
+    await page.wait_for_timeout(1000)
+
+    # Continuar
     cont = page.locator('button[data-cy="btn-continuar"], button:has-text("Continuar")').first
     if await cont.count():
         cls = await cont.get_attribute("class") or ""
         dis = await cont.get_attribute("disabled")
         print(f"[omint] Continuar: disabled={dis!r} actionable={'q-btn--actionable' in cls}", flush=True)
-
-    # Tenta clique normal primeiro; se não responder usa force
     try:
-        await cont.click(timeout=2000)
+        await cont.click(timeout=3000)
     except Exception:
         await cont.click(force=True)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(4000)
     print(f"[omint] pós-dados pessoais → {page.url}", flush=True)
 
 
 async def _extrair_coberturas(page: Page) -> list[Cobertura]:
     coberturas = []
     try:
+        # Aguarda a página de produtos renderizar (Quasar SPA + chamada à API)
         try:
-            await page.wait_for_selector(
-                'h3, h4, [class*="cobertura"], [class*="produto"], [class*="card"]',
-                timeout=8_000
-            )
+            await page.wait_for_selector('text=Selecione o produto', timeout=15_000)
         except Exception:
             pass
+        await page.wait_for_timeout(2000)
 
+        # Produtos aparecem como linhas "OMINT <NOME>" no inner_text
         vistos: set[str] = set()
-        titulos = await page.query_selector_all(
-            'h3, h4, [class*="cobertura"], [class*="plano"], [class*="produto"], td:first-child'
-        )
-        for el in titulos:
-            nome = (await el.inner_text()).strip()
-            if not nome or len(nome) < 5 or nome in vistos:
-                continue
-            vistos.add(nome)
-            coberturas.append(Cobertura(
-                id=f"omint_{re.sub(r'[^a-z0-9]', '_', nome.lower()[:30])}",
-                nome=nome,
-                descricao="",
-                valor_min=50_000.0,
-                valor_max=3_000_000.0,
-                premio_referencia=0.0,
-                seguradora="omint",
-            ))
+        txt = await page.inner_text("body")
+        for linha in txt.splitlines():
+            nome = linha.strip()
+            if nome.upper().startswith("OMINT ") and len(nome) >= 8 and nome not in vistos:
+                vistos.add(nome)
+                coberturas.append(Cobertura(
+                    id=f"omint_{re.sub(r'[^a-z0-9]', '_', nome.lower()[:30])}",
+                    nome=nome,
+                    descricao="",
+                    valor_min=50_000.0,
+                    valor_max=3_000_000.0,
+                    premio_referencia=0.0,
+                    seguradora="omint",
+                ))
+
+        if not coberturas:
+            print(f"[omint] fallback: nenhuma linha 'OMINT ' encontrada no inner_text", flush=True)
     except Exception as e:
         print(f"[omint] erro ao extrair coberturas: {e}", flush=True)
     return coberturas
