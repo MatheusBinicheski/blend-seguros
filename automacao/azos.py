@@ -39,18 +39,39 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
         # Navegação para simulação
         await page.goto(URL_SIM, wait_until="domcontentloaded", timeout=30_000)
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(2000)
+        print(f"[azos] dados-pessoais → {page.url}", flush=True)
 
-        # Seleciona "Novo cliente" (é um elemento de texto, não um <button>)
-        await page.locator('text="Novo cliente"').click()
-        await page.wait_for_timeout(800)
+        # "Novo cliente" pode ser um botão ou texto clicável — tenta silenciosamente
+        for sel in ['button:has-text("Novo cliente")', 'text="Novo cliente"', '[data-testid*="new"]']:
+            try:
+                el = page.locator(sel).first
+                if await el.count() and await el.is_visible():
+                    await el.click()
+                    await page.wait_for_timeout(600)
+                    break
+            except Exception:
+                pass
 
         # Preenche dados pessoais
         await _preencher_dados_pessoais(page, dados)
+        await page.wait_for_timeout(500)
 
-        # Avança para coberturas
-        await page.locator('button:has-text("Continuar")').click()
-        await page.wait_for_timeout(4000)
+        # Avança para coberturas — tenta clique normal, depois force, depois JS
+        cont = page.locator('button:has-text("Continuar")').first
+        try:
+            await cont.click(timeout=5_000)
+        except Exception:
+            await cont.click(force=True)
+        await page.wait_for_timeout(2000)
+
+        # Poll para confirmar que saiu de dados-pessoais
+        for _ in range(10):
+            if "dados-pessoais" not in page.url:
+                break
+            await page.wait_for_timeout(1000)
+        print(f"[azos] pós-continuar → {page.url}", flush=True)
+
         await page.wait_for_load_state("domcontentloaded", timeout=20_000)
         await page.wait_for_timeout(1500)
 
@@ -83,27 +104,89 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _preencher_dados_pessoais(page: Page, d: dict):
-    campos = {
-        'input[name="name"], input[placeholder*="nome" i]':    d.get("nome", ""),
-        'input[name="birthdate"], input[placeholder*="nasc" i]': d.get("nascimento", ""),
-        'input[name="cpf"]':  d.get("cpf", ""),
-        'input[name="phone"]': d.get("telefone", ""),
-        'input[name="email"]': d.get("email", ""),
-    }
-    for sel, val in campos.items():
-        if not val:
-            continue
-        try:
-            inp = page.locator(sel).first
-            if await inp.count():
-                await inp.scroll_into_view_if_needed()
-                await inp.click()
-                await inp.fill(val)
-                await page.wait_for_timeout(200)
-        except Exception:
-            pass
+    nome = d.get("nome", "")
+    nasc = d.get("nascimento", "")  # DD/MM/YYYY
+    cpf  = d.get("cpf", "")
+    tel  = d.get("telefone", "")
+    email = d.get("email", "")
 
-    # Selects (sexo, estado civil, profissão, fumante, renda)
+    # Nome
+    if nome:
+        for sel in ['input[name="name"]', 'input[placeholder*="nome" i]', 'input[id*="name" i]']:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() and await inp.is_visible():
+                    await inp.click()
+                    await inp.fill(nome)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    break
+            except Exception:
+                pass
+
+    # Nascimento — campo mascarado DD/MM/YYYY, usa press_sequentially para disparar máscara
+    if nasc:
+        digits = nasc.replace("/", "").replace("-", "")  # só dígitos: DDMMYYYY
+        for sel in [
+            'input[name="birthdate"]', 'input[placeholder*="nasc" i]',
+            'input[placeholder*="dd/mm" i]', 'input[id*="birth" i]',
+        ]:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() and await inp.is_visible():
+                    await inp.click()
+                    await inp.press_sequentially(digits, delay=50)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    break
+            except Exception:
+                pass
+
+    # CPF
+    if cpf:
+        cpf_digits = re.sub(r'\D', '', cpf)
+        for sel in ['input[name="cpf"]', 'input[placeholder*="cpf" i]', 'input[id*="cpf" i]']:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() and await inp.is_visible():
+                    await inp.click()
+                    await inp.press_sequentially(cpf_digits, delay=50)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    break
+            except Exception:
+                pass
+
+    # Telefone
+    if tel:
+        tel_digits = re.sub(r'\D', '', tel)
+        for sel in ['input[name="phone"]', 'input[placeholder*="fone" i]', 'input[id*="phone" i]']:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() and await inp.is_visible():
+                    await inp.click()
+                    await inp.press_sequentially(tel_digits, delay=50)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    break
+            except Exception:
+                pass
+
+    # E-mail
+    if email:
+        for sel in ['input[name="email"]', 'input[type="email"]']:
+            try:
+                inp = page.locator(sel).first
+                if await inp.count() and await inp.is_visible():
+                    await inp.click()
+                    await inp.fill(email)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    break
+            except Exception:
+                pass
+
+    # Selects (sexo, renda)
     await _preencher_selects(page, d)
     await page.wait_for_timeout(500)
 
