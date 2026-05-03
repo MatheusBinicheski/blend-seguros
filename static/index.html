@@ -16,7 +16,6 @@
     --azos:     #7c3aed;
     --mag:      #0ea5e9;
     --omint:    #f59e0b;
-    --centauro: #ef4444;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--cinza); color: var(--texto); }
@@ -59,14 +58,12 @@
   .seg-card.azos     { background: #ede9fe; border-color: var(--azos); }
   .seg-card.mag      { background: #e0f2fe; border-color: var(--mag); }
   .seg-card.omint    { background: #fef3c7; border-color: var(--omint); }
-  .seg-card.centauro { background: #fee2e2; border-color: var(--centauro); }
   .seg-card .seg-nome { font-weight: 700; font-size: .85rem; margin-bottom: 4px; }
   .seg-card .seg-status { font-size: .75rem; color: var(--muted); }
   .seg-card .seg-count { font-size: 1.4rem; font-weight: 800; }
   .seg-card.azos .seg-count { color: var(--azos); }
   .seg-card.mag .seg-count  { color: var(--mag); }
   .seg-card.omint .seg-count { color: var(--omint); }
-  .seg-card.centauro .seg-count { color: var(--centauro); }
 
   /* ── Tabela de coberturas ── */
   .blend-grid { overflow-x: auto; }
@@ -80,7 +77,6 @@
   .badge-azos     { background: #ede9fe; color: var(--azos); }
   .badge-mag      { background: #e0f2fe; color: #0369a1; }
   .badge-omint    { background: #fef3c7; color: #b45309; }
-  .badge-centauro { background: #fee2e2; color: #b91c1c; }
 
   .valor-input { width: 120px; padding: 6px 8px; border: 1px solid var(--borda); border-radius: 6px; font-size: .85rem; }
   .check-select { width: 18px; height: 18px; cursor: pointer; accent-color: var(--azul-claro); }
@@ -187,11 +183,6 @@
         <div class="seg-nome">OMINT</div>
         <div class="seg-count" id="cnt-omint">—</div>
         <div class="seg-status" id="st-omint">aguardando</div>
-      </div>
-      <div class="seg-card centauro" id="seg-centauro">
-        <div class="seg-nome">CENTAURO</div>
-        <div class="seg-count" id="cnt-centauro">—</div>
-        <div class="seg-status" id="st-centauro">aguardando</div>
       </div>
     </div>
   </div>

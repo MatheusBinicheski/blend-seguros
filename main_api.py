@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from automacao import azos, mag, omint, centauro
+from automacao import azos, mag, omint
 
 # ── Estado em memória ─────────────────────────────────────────────────────────
 JOBS: dict[str, dict] = {}
@@ -184,10 +184,9 @@ async def resultado(job_id: str):
 # ── Lógica de background ──────────────────────────────────────────────────────
 
 MODULOS = {
-    "azos":     azos,
-    "mag":      mag,
-    "omint":    omint,
-    "centauro": centauro,
+    "azos":  azos,
+    "mag":   mag,
+    "omint": omint,
 }
 
 
