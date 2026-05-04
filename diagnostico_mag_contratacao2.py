@@ -359,38 +359,64 @@ async def adicionar_produto(page: Page, nome: str, capital_reais: int):
         await page.keyboard.press("Escape")
         print(f"  ⚠️ nenhuma opção para: {nome}", flush=True)
         return
-    await page.wait_for_timeout(1500)
+    await page.wait_for_timeout(3000)  # aguarda renderização completa do card
 
     # Preenche o capital — qualquer input[id*="product_{codigo}"][id*="benefit"]
     centavos = str(capital_reais * 100)
     filled_any = False
 
+    async def preencher_benefits(locator):
+        nonlocal filled_any
+        cnt = await locator.count()
+        for i in range(cnt):
+            benefit = locator.nth(i)
+            eid = await benefit.get_attribute('id') or f"idx{i}"
+            try:
+                await benefit.scroll_into_view_if_needed(timeout=8000)
+            except Exception:
+                pass
+            await benefit.focus()
+            await page.keyboard.press("Control+a")
+            await page.keyboard.type(centavos, delay=25)
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(300)
+            val = await benefit.input_value()
+            print(f"  benefício [{eid}] = {val}", flush=True)
+            filled_any = True
+        return cnt
+
     if codigo:
-        all_benefits = page.locator(f'input[id*="product_{codigo}"][id*="benefit"]')
-        cnt = await all_benefits.count()
-        if cnt:
-            for i in range(cnt):
-                benefit = all_benefits.nth(i)
-                eid = await benefit.get_attribute('id') or f"idx{i}"
-                try:
-                    await benefit.scroll_into_view_if_needed(timeout=8000)
-                except Exception:
-                    pass
-                await benefit.focus()
-                await page.keyboard.press("Control+a")
-                await page.keyboard.type(centavos, delay=25)
-                await page.keyboard.press("Tab")
-                await page.wait_for_timeout(300)
-                val = await benefit.input_value()
-                print(f"  benefício [{eid}] = {val}", flush=True)
-                filled_any = True
-        else:
-            # Dumpa todos inputs deste produto para diagnóstico
+        loc1 = page.locator(f'input[id*="product_{codigo}"][id*="benefit"]')
+        cnt1 = await preencher_benefits(loc1)
+
+        if cnt1 == 0:
+            # Dumpa inputs do produto para diagnóstico
             cand_all = page.locator(f'input[id*="product_{codigo}"]')
             n = await cand_all.count()
             for i in range(min(n, 8)):
                 eid = await cand_all.nth(i).get_attribute('id')
                 print(f"  debug input: id={eid}")
+        else:
+            # Segundo pass: alguns inputs aparecem após o preenchimento do primeiro
+            await page.wait_for_timeout(800)
+            loc2 = page.locator(f'input[id*="product_{codigo}"][id*="benefit"]')
+            cnt2 = await loc2.count()
+            if cnt2 > cnt1:
+                print(f"  [{cnt2 - cnt1} inputs adicionais apareceram]", flush=True)
+                for i in range(cnt1, cnt2):
+                    benefit = loc2.nth(i)
+                    eid = await benefit.get_attribute('id') or f"idx{i}"
+                    try:
+                        await benefit.scroll_into_view_if_needed(timeout=8000)
+                    except Exception:
+                        pass
+                    await benefit.focus()
+                    await page.keyboard.press("Control+a")
+                    await page.keyboard.type(centavos, delay=25)
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    val = await benefit.input_value()
+                    print(f"  benefício2 [{eid}] = {val}", flush=True)
 
     if not filled_any:
         print(f"  ⚠️ input benefício não encontrado (codigo={codigo})", flush=True)
