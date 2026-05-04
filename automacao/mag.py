@@ -1,291 +1,373 @@
-"""Automação MAG Seguros — Venda Digital."""
+"""Automação MAG Seguros — Venda Digital (contratacao/simulacao)."""
 from __future__ import annotations
 import asyncio, os, re
 from playwright.async_api import Page
-from .base import novo_browser, fechar_browser, extrair_valor_monetario, resolver_captcha
+from .base import novo_browser, fechar_browser, resolver_captcha
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
 
-URL_LOGIN = "https://digital.mag.com.br"
+URL_SIMULACAO = "https://digital.mag.com.br/contratacao/simulacao"
 CNPJ  = os.getenv("MAG_CNPJ", "")
 SENHA = os.getenv("MAG_SENHA", "")
 
 _SESSOES: dict[str, dict] = {}
 
-_INJECT_STATES_JS = """(items) => {
-    const sel = document.querySelector('#b2-b18-DropdownSelect');
-    if (!sel) return 0;
-    while (sel.options.length > 1) sel.remove(1);
-    items.forEach(item => {
-        const s = item.States;
-        const opt = document.createElement('option');
-        opt.value = String(s.Id);
-        opt.text = s.Label;
-        sel.appendChild(opt);
-    });
-    return sel.options.length;
-}"""
+
+async def _abrir_react_select(page: Page, inp_id: str):
+    """Dispara mousedown no div control para abrir o React-Select."""
+    await page.evaluate(f"""() => {{
+        const inp = document.getElementById('{inp_id}');
+        if (!inp) return;
+        let el = inp;
+        for (let i = 0; i < 12; i++) {{
+            el = el && el.parentElement;
+            if (!el) break;
+            if ((el.className || '').includes('control')) {{
+                el.dispatchEvent(new MouseEvent('mousedown', {{bubbles:true, cancelable:true}}));
+                inp.focus();
+                return;
+            }}
+        }}
+        inp.focus();
+    }}""")
+    await page.wait_for_timeout(700)
+
+
+async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: bool = False):
+    """
+    teclado=False: fill("") + type — vd-select (Modelo, Ocupação, Profissão)
+    teclado=True : keyboard.type sem fill — vd-input-suggestion (Estado)
+    """
+    try:
+        await page.wait_for_selector('.loading', state='hidden', timeout=10_000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(300)
+    await _abrir_react_select(page, inp_id)
+    inp = page.locator(f'#{inp_id}')
+    if teclado:
+        await page.keyboard.press("Control+a")
+        await page.wait_for_timeout(100)
+        await page.keyboard.type(texto[:15], delay=80)
+    else:
+        await inp.fill("")
+        await inp.type(texto[:12], delay=50)
+    await page.wait_for_timeout(3000)
+
+    opt_exato = page.locator('div[class*="option"]').filter(
+        has_text=re.compile(r'^\s*' + re.escape(texto) + r'\s*$', re.IGNORECASE)
+    )
+    if await opt_exato.count():
+        await opt_exato.first.click()
+    else:
+        opts = page.locator(f'div[class*="option"]:has-text("{texto.split()[0]}")')
+        n = await opts.count()
+        if n:
+            await opts.nth(n - 1).click()
+        else:
+            await page.keyboard.press("ArrowDown")
+            await page.wait_for_timeout(150)
+            await page.keyboard.press("Enter")
+    await page.wait_for_timeout(400)
+
+
+async def _login(page: Page):
+    print("[mag] abrindo identidade…", flush=True)
+    await page.goto("https://digital.mag.com.br/simulador",
+                    wait_until="domcontentloaded", timeout=45_000)
+    await page.wait_for_timeout(3000)
+
+    await page.wait_for_selector('#Cpf', timeout=15_000)
+    await page.locator('#Cpf').fill(CNPJ)
+    await page.locator('input[type="password"]').first.fill(SENHA)
+    await resolver_captcha(page)
+    await page.wait_for_timeout(1000)
+    await page.evaluate("const b=document.getElementById('btnAuth'); if(b) b.removeAttribute('disabled');")
+    await page.wait_for_timeout(300)
+    await page.locator('#btnAuth').first.click()
+
+    for _ in range(30):
+        await page.wait_for_timeout(1000)
+        if not any(x in page.url for x in ("identidade", "auth-callback", "login")):
+            break
+
+    if "/parceria" in page.url:
+        lbl = page.locator('.area__partnership label.radio-list__label').first
+        if await lbl.count():
+            await lbl.click(force=True)
+        else:
+            await page.locator('input[name*="partnerships"]').first.click(force=True)
+        await page.wait_for_timeout(500)
+        hier = page.locator('.area__hierarchy label.radio-list__label').first
+        if await hier.count():
+            await hier.click(force=True)
+            await page.wait_for_timeout(300)
+        try:
+            await page.locator('button:has-text("Selecionar")').last.click(timeout=5000)
+        except Exception:
+            await page.evaluate(
+                "() => { const b=[...document.querySelectorAll('button')]"
+                ".find(b=>b.textContent.includes('Selecionar')); if(b)b.click(); }"
+            )
+        for _ in range(15):
+            await page.wait_for_timeout(700)
+            if "/parceria" not in page.url:
+                break
+    print(f"[mag] login ok → {page.url}", flush=True)
+
+
+async def _preencher_dados(page: Page, dados: dict):
+    await page.goto(URL_SIMULACAO, wait_until="domcontentloaded", timeout=30_000)
+    await page.wait_for_timeout(3000)
+
+    await _escolher_react_select(
+        page, "quoter_form__your-data__proposal_model_id__input", "VIDA TODA VD STOA"
+    )
+
+    nome_inp = page.locator('#quoter_form__your-data__input_name')
+    await nome_inp.click()
+    await nome_inp.fill(dados.get("nome", ""))
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(400)
+    await page.evaluate("""() => {
+        const b = [...document.querySelectorAll('button')]
+            .find(b => /não tem|nao tem/i.test(b.textContent||'') && b.offsetParent);
+        if (b) b.click();
+    }""")
+    await page.wait_for_timeout(300)
+
+    cpf = re.sub(r"\D", "", dados.get("cpf", ""))
+    cpf_inp = page.locator('#quoter_form__your-data__document')
+    await cpf_inp.click()
+    await cpf_inp.press_sequentially(cpf, delay=30)
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(300)
+
+    nasc_raw = re.sub(r"\D", "", dados.get("nascimento", ""))
+    nasc_inp = page.locator('#quoter_form__your-data__birthday')
+    await nasc_inp.click()
+    await nasc_inp.press_sequentially(nasc_raw, delay=40)
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(300)
+
+    sexo = dados.get("sexo", "M")
+    gender_id = ("quoter_form__your-data__gender__1"
+                 if sexo.upper() in ("M", "MASCULINO")
+                 else "quoter_form__your-data__gender__2")
+    await page.locator(f'label.radio-list__label[for="{gender_id}"]').click()
+    await page.wait_for_timeout(200)
+
+    await _escolher_react_select(
+        page, "quoter_form__your-data__state_id__input",
+        dados.get("estado", "Paulo"), teclado=True
+    )
+
+    await _escolher_react_select(
+        page, "quoter_form__your-data__occupation__input",
+        dados.get("ocupacao", "Profissional Liberal")
+    )
+
+    await page.wait_for_timeout(600)
+    works_inp = page.locator('#quoter_form__your-data__works_as__input')
+    if await works_inp.is_visible():
+        await _escolher_react_select(
+            page, "quoter_form__your-data__works_as__input",
+            dados.get("profissao", "")
+        )
+
+    renda_raw = re.sub(r'\D', '', str(dados.get("renda_mensal", "5000")))
+    renda_inp = page.locator('#quoter_form__your-data__currency')
+    await renda_inp.click(click_count=3)
+    await renda_inp.press_sequentially(str(int(renda_raw) * 100), delay=30)
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(300)
+
+    await page.locator(
+        'label.radio-list__label[for="quoter_form__your-data__has_companion__0"]'
+    ).click()
+    await page.wait_for_timeout(300)
+
+
+async def _editar_solucao(page: Page) -> bool:
+    btn = page.locator('button:has-text("EDITAR SOLUÇÃO"), button:has-text("Editar Solução")').first
+    if not await btn.count():
+        return False
+    await btn.click()
+    await page.wait_for_timeout(5000)
+    return True
+
+
+async def _benefit_ids_for(page: Page, cod: str) -> list:
+    """IDs de inputs do produto que contenham 'benefit' (case-insensitive)."""
+    return await page.evaluate(f"""() => {{
+        return [...document.querySelectorAll('input[id*="product_{cod}"]')]
+            .filter(el => el.id.toLowerCase().includes('benefit'))
+            .map(el => el.id);
+    }}""")
+
+
+async def _preencher_benefit_id(page: Page, eid: str, centavos: str):
+    loc = page.locator(f'#{eid}')
+    try:
+        await loc.scroll_into_view_if_needed(timeout=8000)
+    except Exception:
+        pass
+    await loc.focus()
+    await page.keyboard.press("Control+a")
+    await page.keyboard.type(centavos, delay=25)
+    await page.keyboard.press("Tab")
+    await page.wait_for_timeout(300)
+    val = await loc.input_value()
+    print(f"  benefício [{eid}] = {val}", flush=True)
+
+
+async def _adicionar_produto(page: Page, nome: str, capital):
+    """
+    capital: int (mesmo para todos) ou dict {"default": N, "fieldkey": M}
+    """
+    def get_centavos(eid: str) -> str:
+        if isinstance(capital, dict):
+            eid_lower = eid.lower()
+            for key, val in capital.items():
+                if key != "default" and key in eid_lower:
+                    return str(val * 100)
+            return str(capital.get("default", 0) * 100)
+        return str(capital * 100)
+
+    print(f"[mag] adicionando: {nome}", flush=True)
+
+    await _abrir_react_select(page, "react-select-2-input")
+    await page.wait_for_timeout(300)
+    await page.locator('#react-select-2-input').focus()
+    await page.keyboard.type(nome[:20], delay=60)
+    await page.wait_for_timeout(2500)
+
+    opcoes = await page.locator('div[class*="option"]').all_inner_texts()
+    codigo = None
+
+    opt_exato = page.locator('div[class*="option"]').filter(
+        has_text=re.compile(re.escape(nome[:15]), re.IGNORECASE)
+    )
+    if await opt_exato.count():
+        opt_text = await opt_exato.first.inner_text()
+        m = re.search(r'\((\d+)\)', opt_text)
+        if m:
+            codigo = m.group(1)
+        await opt_exato.first.click()
+    elif opcoes:
+        opt_text = opcoes[0]
+        m = re.search(r'\((\d+)\)', opt_text)
+        if m:
+            codigo = m.group(1)
+        await page.locator('div[class*="option"]').first.click()
+    else:
+        await page.keyboard.press("Escape")
+        print(f"  ⚠️ nenhuma opção para: {nome}", flush=True)
+        return
+    await page.wait_for_timeout(3000)
+
+    if not codigo:
+        return
+
+    ids1 = await _benefit_ids_for(page, codigo)
+    for eid in ids1:
+        await _preencher_benefit_id(page, eid, get_centavos(eid))
+
+    if ids1:
+        await page.wait_for_timeout(800)
+        ids2 = await _benefit_ids_for(page, codigo)
+        for eid in [e for e in ids2 if e not in ids1]:
+            await _preencher_benefit_id(page, eid, get_centavos(eid))
+
+    await page.wait_for_timeout(300)
+
+
+async def _confirmar_solucao(page: Page) -> float:
+    try:
+        await page.wait_for_selector('.loading', state='hidden', timeout=10_000)
+    except Exception:
+        pass
+
+    total_txt = await page.evaluate("""() => {
+        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+            if (/CONTRIBUI/i.test(node.textContent)) {
+                return node.parentElement?.closest('[class]')?.textContent || node.textContent;
+            }
+        }
+        return '';
+    }""")
+    print(f"[mag] total pré-confirmar: {total_txt.strip()}", flush=True)
+
+    btn = page.locator('button:has-text("CONFIRMAR SOLUÇÃO")').first
+    await btn.wait_for(state='visible', timeout=10_000)
+    await btn.click()
+    await page.wait_for_timeout(3000)
+
+    for _ in range(5):
+        modal_ok = page.locator('button:has-text("OK"), button:has-text("Ok"), button:has-text("Fechar")')
+        if await modal_ok.count():
+            await modal_ok.first.click()
+            await page.wait_for_timeout(1500)
+        else:
+            break
+    await page.wait_for_timeout(3000)
+
+    m = re.search(r'R\$\s*([\d.]+),([\d]{2})', total_txt)
+    return float(m.group(1).replace('.', '') + '.' + m.group(2)) if m else 0.0
 
 
 async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> ResultadoFase1:
     pw, browser, ctx, page = await novo_browser(headless)
     session_id = "mag-" + str(id(page))
     try:
-        print(f"[mag] iniciando fase1", flush=True)
-        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
-        await page.wait_for_timeout(2000)
+        print("[mag] iniciando fase1", flush=True)
 
         await _login(page)
-        print(f"[mag] login ok → {page.url}", flush=True)
+        await _preencher_dados(page, dados)
 
-        await _navegar_simulacao(page, dados)
+        ok = await _editar_solucao(page)
+        if not ok:
+            raise Exception("EDITAR SOLUÇÃO não encontrado")
 
-        coberturas = await _extrair_coberturas(page)
-        print(f"[mag] {len(coberturas)} coberturas extraídas", flush=True)
-
-        _SESSOES[session_id] = {"pw": pw, "browser": browser, "ctx": ctx, "page": page, "dados": dados}
-        return ResultadoFase1(seguradora="mag", ok=True, coberturas=coberturas, session_id=session_id)
-
-    except Exception as e:
-        print(f"[mag] ERRO fase1: {e}", flush=True)
-        await fechar_browser(pw, browser)
-        return ResultadoFase1(seguradora="mag", ok=False, erro=str(e))
-
-
-async def _login(page: Page):
-    await page.wait_for_selector('input#Cpf', timeout=15_000)
-    await page.locator('input#Cpf').fill(CNPJ)
-    await page.locator('input[type="password"]').first.fill(SENHA)
-    await resolver_captcha(page)
-    await page.wait_for_timeout(1000)
-
-    await page.evaluate(
-        "const b = document.getElementById('btnAuth'); if (b) b.removeAttribute('disabled');"
-    )
-    await page.wait_for_timeout(300)
-    await page.locator('#btnAuth').first.click()
-
-    await page.wait_for_selector('label.radio-list__label', timeout=45_000)
-    await page.wait_for_timeout(1000)
-
-    if "/parceria" in page.url:
-        label_stoa = page.locator('.area__partnership label.radio-list__label').first
-        if await label_stoa.count():
-            await label_stoa.click(force=True)
-        else:
-            await page.locator('input[name*="partnerships"]').first.click(force=True)
+        # Descobre produtos disponíveis via dropdown vazio
+        await _abrir_react_select(page, "react-select-2-input")
+        inp = page.locator('#react-select-2-input')
+        await inp.fill("")
+        await page.wait_for_timeout(2000)
+        all_opts = await page.locator('div[class*="option"]').all_inner_texts()
+        await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 
-        label_hier = page.locator('.area__hierarchy label.radio-list__label').first
-        if await label_hier.count():
-            await label_hier.click(force=True)
-            await page.wait_for_timeout(300)
-
-        sel_btn = page.locator('button:has-text("Selecionar")').last
-        try:
-            await sel_btn.click(timeout=3000)
-        except Exception:
-            try:
-                await sel_btn.click(force=True)
-            except Exception:
-                await page.evaluate("""() => {
-                    const btns = [...document.querySelectorAll('button')];
-                    const btn = btns.find(b => b.textContent.includes('Selecionar'));
-                    if (btn) btn.click();
-                }""")
-
-        for _ in range(15):
-            await page.wait_for_timeout(700)
-            if "/parceria" not in page.url:
-                break
-        await page.wait_for_timeout(1000)
-        print(f"[mag] pós-parceria → {page.url}", flush=True)
-
-
-async def _navegar_simulacao(page: Page, dados: dict):
-    states_data: dict = {"items": None}
-    ev = asyncio.Event()
-
-    async def _on_states(resp):
-        if "ScreenDataSetGetStates" in resp.url:
-            try:
-                body = await resp.json()
-                items = body.get("data", {}).get("List", {}).get("List", [])
-                if items:
-                    states_data["items"] = items
-                    ev.set()
-            except Exception:
-                pass
-
-    page.on("response", _on_states)
-    try:
-        await page.goto("https://digital.mag.com.br/simulador", wait_until="domcontentloaded", timeout=30_000)
-        print(f"[mag] simulador → {page.url}", flush=True)
-
-        # Aguarda iframe OutSystems
-        frame = None
-        for _ in range(20):
-            frame = next((f for f in page.frames if "outsystems" in f.url or "simple2u" in f.url), None)
-            if frame:
-                break
-            await page.wait_for_timeout(500)
-        if not frame:
-            raise Exception("iframe OutSystems não encontrado")
-
-        # Aguarda estados da API (max 15s)
-        try:
-            await asyncio.wait_for(ev.wait(), timeout=15)
-        except asyncio.TimeoutError:
-            print("[mag] atenção: GetStates não chegou a tempo", flush=True)
-
-        await page.wait_for_timeout(2000)
-
-        fl = page.frame_locator("iframe[src*='simple2u'], iframe[src*='outsystems']").first
-
-        # 1. LGPD
-        await frame.evaluate("() => document.querySelector('#b2-BtnSideBarLgpd')?.click()")
-        await page.wait_for_timeout(800)
-
-        # 2. Nome
-        nome = dados.get("nome", "")
-        if nome:
-            await fl.locator('#b2-InputName').evaluate("el => el.scrollIntoView({block:'center'})")
-            await fl.locator('#b2-InputName').press_sequentially(nome, delay=40)
-            await fl.locator('#b2-InputName').press("Tab")
-            await page.wait_for_timeout(400)
-            # Rejeita dialog de nome social
-            await frame.evaluate(
-                "() => { const b=[...document.querySelectorAll('button')]"
-                ".find(b=>b.textContent.trim()==='Não tem'&&b.offsetParent); if(b) b.click(); }"
-            )
-            await page.wait_for_timeout(300)
-
-        # 3. CPF
-        cpf = re.sub(r"\D", "", dados.get("cpf", ""))
-        if cpf:
-            await fl.locator('#b2-InputDocument').evaluate("el => el.scrollIntoView({block:'center'})")
-            await fl.locator('#b2-InputDocument').press_sequentially(cpf, delay=50)
-            await fl.locator('#b2-InputDocument').press("Tab")
-            await page.wait_for_timeout(200)
-
-        # 4. Nascimento — DDMMYYYY
-        nasc_raw = dados.get("nascimento", "")
-        if nasc_raw:
-            digits = re.sub(r"\D", "", nasc_raw)
-            if len(digits) == 8 and digits[:4].isdigit() and int(digits[:4]) > 1900:
-                # ISO YYYYMMDD → DDMMYYYY
-                digits = digits[6:8] + digits[4:6] + digits[0:4]
-            await fl.locator('#b2-InputBirthdate').evaluate("el => el.scrollIntoView({block:'center'})")
-            await fl.locator('#b2-InputBirthdate').press_sequentially(digits, delay=80)
-            await fl.locator('#b2-InputBirthdate').press("Tab")
-            await page.wait_for_timeout(200)
-
-        # 5. Gênero + Ocupação via JS (sem interação visual)
-        sexo = dados.get("sexo", "M")
-        radio_id = "#b2-RadioButtonMale-input" if sexo.upper() in ("M", "MASCULINO") else "#b2-RadioButtonFemale-input"
-        await frame.evaluate(f"() => document.querySelector('{radio_id}')?.click()")
-        await page.wait_for_timeout(200)
-
-        await frame.evaluate("""() => {
-            const s = document.querySelector('#b2-DropdownOccupation');
-            if (s) { s.value = '3'; s.dispatchEvent(new Event('change', {bubbles: true})); }
-        }""")
-        await page.wait_for_timeout(400)
-
-        # 6. Estado — inject estados capturados + Choices.js click
-        if states_data["items"]:
-            await frame.evaluate(_INJECT_STATES_JS, states_data["items"])
-            # Abre o combobox Choices.js e clica no item São Paulo
-            combobox = fl.locator('.choices[role="combobox"]').first
-            await combobox.scroll_into_view_if_needed()
-            await combobox.click()
-            await page.wait_for_timeout(500)
-            sp_item = fl.locator('.choices__item.needsclick').filter(has_text="São Paulo").first
-            if await sp_item.count():
-                await sp_item.click()
-                await page.wait_for_timeout(300)
-            print(f"[mag] estado SP selecionado", flush=True)
-        else:
-            print("[mag] estados não capturados — estado ficará vazio", flush=True)
-
-        # 7. Renda via nativeSetter com valor formatado
-        renda_val = dados.get("renda_mensal", "5000")
-        try:
-            renda_int = int(float(str(renda_val).replace(",", ".").replace(" ", "")))
-        except Exception:
-            renda_int = 5000
-        renda_fmt = "R$ " + f"{renda_int:,}".replace(",", ".") + ",00"
-        await frame.evaluate(f"""() => {{
-            const inp = document.querySelector('#b2-b19-CurrencyInput');
-            if (!inp) return;
-            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-            setter.call(inp, '{renda_fmt}');
-            inp.dispatchEvent(new Event('focus', {{bubbles: true}}));
-            inp.dispatchEvent(new Event('input', {{bubbles: true}}));
-            inp.dispatchEvent(new Event('change', {{bubbles: true}}));
-            inp.dispatchEvent(new Event('blur', {{bubbles: true}}));
-        }}""")
-        await page.wait_for_timeout(300)
-        print(f"[mag] renda={renda_fmt}", flush=True)
-
-        # 8. Cônjuge — Não
-        await frame.evaluate("() => document.querySelector('#b2-RadioButtonSpouseNo-input')?.click()")
-        await page.wait_for_timeout(200)
-
-        # 9. AVANÇAR
-        await frame.evaluate("""() => {
-            const av = [...document.querySelectorAll('button')]
-                .find(b => /avan[çc]ar/i.test(b.textContent || ''));
-            if (av) av.click();
-        }""")
-        await page.wait_for_timeout(5000)
-        print(f"[mag] pós-avançar → {page.url}", flush=True)
-
-    finally:
-        try:
-            page.remove_listener("response", _on_states)
-        except Exception:
-            pass
-
-
-async def _extrair_coberturas(page: Page) -> list[Cobertura]:
-    coberturas = []
-    try:
-        frame = next((f for f in page.frames if "outsystems" in f.url or "simple2u" in f.url), None)
-        if not frame:
-            return coberturas
-
-        # Aguarda página de produtos carregar
-        try:
-            await frame.wait_for_selector('text=Selecionar Produtos', timeout=10_000)
-        except Exception:
-            pass
-        await page.wait_for_timeout(1000)
-
-        # Extrai nomes do inner_text — linhas com padrão "NOME - RIDER (XXXX)" ou "(XXXX)"
-        txt = await frame.inner_text("body")
-        vistos: set[str] = set()
-        for linha in txt.splitlines():
-            nome = linha.strip()
-            if (
-                nome
-                and len(nome) >= 5
-                and re.search(r'\(\d{3,}\)$', nome)
-                and "VER DETALHES" not in nome.upper()
-                and nome not in vistos
-            ):
-                vistos.add(nome)
+        coberturas = []
+        for opt in all_opts:
+            mt = re.match(r'^(.+?)\s*\((\d+)\)\s*$', opt.strip())
+            if mt:
                 coberturas.append(Cobertura(
-                    id=f"mag_{re.sub(r'[^a-z0-9]', '_', nome.lower()[:30])}",
-                    nome=nome,
+                    id=f"mag_{mt.group(2)}",
+                    nome=mt.group(1).strip(),
                     descricao="",
-                    valor_min=50_000.0,
+                    valor_min=1_000.0,
                     valor_max=3_000_000.0,
                     premio_referencia=0.0,
                     seguradora="mag",
                 ))
+
+        print(f"[mag] {len(coberturas)} coberturas encontradas", flush=True)
+        _SESSOES[session_id] = {
+            "pw": pw, "browser": browser, "ctx": ctx,
+            "page": page, "dados": dados,
+        }
+        return ResultadoFase1(
+            seguradora="mag", ok=True,
+            coberturas=coberturas, session_id=session_id,
+        )
+
     except Exception as e:
-        print(f"[mag] erro ao extrair coberturas: {e}", flush=True)
-    return coberturas
+        import traceback; traceback.print_exc()
+        print(f"[mag] ERRO fase1: {e}", flush=True)
+        await fechar_browser(pw, browser)
+        return ResultadoFase1(seguradora="mag", ok=False, erro=str(e))
 
 
 async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[ResultadoCotacao]:
@@ -293,53 +375,34 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
     if not sessao:
         return [ResultadoCotacao(
             seguradora="mag", cobertura_nome="", valor_capital=0,
-            premio_mensal=0, erro="Sessão expirada"
+            premio_mensal=0, erro="Sessão expirada",
         )]
 
     page: Page = sessao["page"]
     resultados = []
 
     try:
-        frame = next((f for f in page.frames if "outsystems" in f.url or "simple2u" in f.url), None)
-        if not frame:
-            raise Exception("iframe OutSystems não encontrado em fase2")
-
-        fl = page.frame_locator("iframe[src*='simple2u'], iframe[src*='outsystems']").first
-
-        # Seleciona cada produto clicando no item da lista
         for sel in selecoes:
-            nome_curto = sel["nome"][:50]
-            item = fl.locator(f'text="{nome_curto}"').first
-            if await item.count():
-                await item.click()
-                await page.wait_for_timeout(400)
+            await _adicionar_produto(page, sel["nome"], sel.get("valor", 0))
 
-        # AVANÇAR
-        await frame.evaluate("""() => {
-            const av = [...document.querySelectorAll('button')]
-                .find(b => /avan[çc]ar/i.test(b.textContent || ''));
-            if (av) av.click();
-        }""")
-        await page.wait_for_timeout(5000)
-
-        txt = await page.inner_text("body")
-        m = re.search(r'R\$\s*([\d.]+),([\d]{2})', txt)
-        premio = float(m.group(1).replace('.', '') + '.' + m.group(2)) if m else 0.0
+        premio_total = await _confirmar_solucao(page)
+        print(f"[mag] prêmio total = R$ {premio_total:.2f}", flush=True)
 
         for sel in selecoes:
             resultados.append(ResultadoCotacao(
                 seguradora="mag",
                 cobertura_nome=sel["nome"],
                 valor_capital=float(sel.get("valor", 0)),
-                premio_mensal=premio / max(len(selecoes), 1),
+                premio_mensal=round(premio_total / max(len(selecoes), 1), 2),
                 link_proposta=page.url,
             ))
 
     except Exception as e:
+        import traceback; traceback.print_exc()
         print(f"[mag] ERRO fase2: {e}", flush=True)
         resultados.append(ResultadoCotacao(
             seguradora="mag", cobertura_nome="Erro", valor_capital=0,
-            premio_mensal=0, erro=str(e)
+            premio_mensal=0, erro=str(e),
         ))
     finally:
         sess = _SESSOES.pop(session_id, None)
