@@ -35,7 +35,8 @@ PRODUTOS = [
     ("DOENÇAS GRAVES PLUS",                             300_000),
     ("DOENÇAS GRAVES VITAL",                            600_000),
     ("DIÁRIA POR INTERNAÇÃO HOSPITALAR + SUPORTE 150",    1_000),
-    ("DIARIA POR INCAPACIDADE TEMPORÁRIA POR ACIDENTE",   1_000),
+    # DIT: coverage_0__benefit máx=R$5k → R$1k; accidentalBenefit mín=R$10k → R$10k
+    ("DIARIA POR INCAPACIDADE TEMPORÁRIA POR ACIDENTE",  {"default": 1_000, "accidentalbenefit": 10_000}),
     ("CIRURGIAS + AMPARO",                              200_000),
     ("ASSISTENCIA INVIDA",                               15_000),
 ]
@@ -320,9 +321,12 @@ async def editar_solucao(page: Page):
 
 
 # ──────────────────────────────────────────────────────────────
-async def adicionar_produto(page: Page, nome: str, capital_reais: int):
-    """Busca o produto no react-select-2-input, seleciona, preenche o capital."""
-    print(f"[produto] adicionando: {nome} — R$ {capital_reais:,}", flush=True)
+async def adicionar_produto(page: Page, nome: str, capital_reais):
+    """Busca o produto no react-select-2-input, seleciona, preenche o capital.
+    capital_reais: int (mesmo valor para todos) ou dict com chaves por sufixo de ID.
+    """
+    resumo = capital_reais if isinstance(capital_reais, int) else capital_reais.get("default", "?")
+    print(f"[produto] adicionando: {nome} — R$ {resumo:,}", flush=True)
 
     # Abre dropdown — NÃO usa fill("") para não apagar tags de produtos anteriores
     await abrir_react_select(page, "react-select-2-input")
@@ -361,35 +365,45 @@ async def adicionar_produto(page: Page, nome: str, capital_reais: int):
         return
     await page.wait_for_timeout(3000)  # aguarda renderização completa do card
 
-    # Preenche o capital — qualquer input[id*="product_{codigo}"][id*="benefit"]
-    centavos = str(capital_reais * 100)
+    # Preenche o capital — busca JS case-insensitive para "benefit" no id
+    def centavos_para(eid: str) -> str:
+        if isinstance(capital_reais, dict):
+            eid_lower = eid.lower()
+            for key, val in capital_reais.items():
+                if key != "default" and key in eid_lower:
+                    return str(val * 100)
+            return str(capital_reais.get("default", 0) * 100)
+        return str(capital_reais * 100)
+
     filled_any = False
 
-    async def preencher_benefits(locator):
+    async def benefit_ids_for(cod: str) -> list:
+        """Retorna IDs de inputs do produto que contenham 'benefit' (qualquer case)."""
+        return await page.evaluate(f"""() => {{
+            return [...document.querySelectorAll('input[id*="product_{cod}"]')]
+                .filter(el => el.id.toLowerCase().includes('benefit'))
+                .map(el => el.id);
+        }}""")
+
+    async def preencher_id(eid: str):
         nonlocal filled_any
-        cnt = await locator.count()
-        for i in range(cnt):
-            benefit = locator.nth(i)
-            eid = await benefit.get_attribute('id') or f"idx{i}"
-            try:
-                await benefit.scroll_into_view_if_needed(timeout=8000)
-            except Exception:
-                pass
-            await benefit.focus()
-            await page.keyboard.press("Control+a")
-            await page.keyboard.type(centavos, delay=25)
-            await page.keyboard.press("Tab")
-            await page.wait_for_timeout(300)
-            val = await benefit.input_value()
-            print(f"  benefício [{eid}] = {val}", flush=True)
-            filled_any = True
-        return cnt
+        loc = page.locator(f'#{eid}')
+        try:
+            await loc.scroll_into_view_if_needed(timeout=8000)
+        except Exception:
+            pass
+        await loc.focus()
+        await page.keyboard.press("Control+a")
+        await page.keyboard.type(centavos_para(eid), delay=25)
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(300)
+        val = await loc.input_value()
+        print(f"  benefício [{eid}] = {val}", flush=True)
+        filled_any = True
 
     if codigo:
-        loc1 = page.locator(f'input[id*="product_{codigo}"][id*="benefit"]')
-        cnt1 = await preencher_benefits(loc1)
-
-        if cnt1 == 0:
+        ids1 = await benefit_ids_for(codigo)
+        if not ids1:
             # Dumpa inputs do produto para diagnóstico
             cand_all = page.locator(f'input[id*="product_{codigo}"]')
             n = await cand_all.count()
@@ -397,26 +411,15 @@ async def adicionar_produto(page: Page, nome: str, capital_reais: int):
                 eid = await cand_all.nth(i).get_attribute('id')
                 print(f"  debug input: id={eid}")
         else:
-            # Segundo pass: alguns inputs aparecem após o preenchimento do primeiro
+            for eid in ids1:
+                await preencher_id(eid)
+            # Segundo pass: aguarda inputs condicionais aparecerem
             await page.wait_for_timeout(800)
-            loc2 = page.locator(f'input[id*="product_{codigo}"][id*="benefit"]')
-            cnt2 = await loc2.count()
-            if cnt2 > cnt1:
-                print(f"  [{cnt2 - cnt1} inputs adicionais apareceram]", flush=True)
-                for i in range(cnt1, cnt2):
-                    benefit = loc2.nth(i)
-                    eid = await benefit.get_attribute('id') or f"idx{i}"
-                    try:
-                        await benefit.scroll_into_view_if_needed(timeout=8000)
-                    except Exception:
-                        pass
-                    await benefit.focus()
-                    await page.keyboard.press("Control+a")
-                    await page.keyboard.type(centavos, delay=25)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    val = await benefit.input_value()
-                    print(f"  benefício2 [{eid}] = {val}", flush=True)
+            ids2 = await benefit_ids_for(codigo)
+            novos = [eid for eid in ids2 if eid not in ids1]
+            for eid in novos:
+                print(f"  [input condicional] {eid}", flush=True)
+                await preencher_id(eid)
 
     if not filled_any:
         print(f"  ⚠️ input benefício não encontrado (codigo={codigo})", flush=True)
