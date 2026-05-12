@@ -13,60 +13,141 @@ _SESSOES: dict[str, dict] = {}
 
 
 async def _abrir_react_select(page: Page, inp_id: str):
-    """Dispara mousedown no div control para abrir o React-Select."""
-    await page.evaluate(f"""() => {{
-        const inp = document.getElementById('{inp_id}');
-        if (!inp) return;
-        let el = inp;
-        for (let i = 0; i < 12; i++) {{
-            el = el && el.parentElement;
-            if (!el) break;
-            if ((el.className || '').includes('control')) {{
-                el.dispatchEvent(new MouseEvent('mousedown', {{bubbles:true, cancelable:true}}));
-                inp.focus();
-                return;
-            }}
-        }}
-        inp.focus();
-    }}""")
+    """
+    Abre um React-Select clicando no Control div (3 níveis acima do input via XPath).
+    React Select v2/v3 escuta mousedown no Control, não no input em si.
+    """
+    if inp_id:
+        inp = page.locator(f'#{inp_id}')
+    else:
+        inp = page.locator('input[aria-autocomplete="list"]').first
+
+    try:
+        await inp.scroll_into_view_if_needed(timeout=5_000)
+    except Exception:
+        pass
+
+    # Clica no Control (3 níveis acima): input → input-container → value-container → control
+    opened = False
+    for xpath in ('xpath=../../..', 'xpath=../../../..', 'xpath=../..'):
+        try:
+            ctrl = inp.locator(xpath)
+            await ctrl.click(timeout=2_000)
+            opened = True
+            break
+        except Exception:
+            continue
+
+    if not opened:
+        try:
+            await inp.click(force=True)
+        except Exception:
+            pass
+
     await page.wait_for_timeout(700)
 
 
 async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: bool = False):
     """
-    teclado=False: fill("") + type — vd-select (Modelo, Ocupação, Profissão)
-    teclado=True : keyboard.type sem fill — vd-input-suggestion (Estado)
+    Preenche e seleciona uma opção num React-Select.
+    Usa [role="option"] e input[role="combobox"] — sem seletores de classe CSS.
     """
     try:
-        await page.wait_for_selector('.loading', state='hidden', timeout=10_000)
+        await page.wait_for_selector('[aria-busy="true"]', state='hidden', timeout=10_000)
     except Exception:
         pass
     await page.wait_for_timeout(300)
     await _abrir_react_select(page, inp_id)
-    inp = page.locator(f'#{inp_id}')
-    if teclado:
-        await page.keyboard.press("Control+a")
-        await page.wait_for_timeout(100)
-        await page.keyboard.type(texto[:15], delay=80)
-    else:
-        await inp.fill("")
-        await inp.type(texto[:12], delay=50)
-    await page.wait_for_timeout(3000)
 
-    opt_exato = page.locator('div[class*="option"]').filter(
+    # Localiza o input pelo ID ou por atributo semântico
+    inp = page.locator(f'#{inp_id}') if inp_id else page.locator(
+        'input[role="combobox"], input[aria-haspopup="listbox"], input[aria-autocomplete="list"]'
+    ).first
+
+    if teclado:
+        # Para React Select assíncrono (busca via API ao digitar):
+        # press_sequentially foca o input E dispara os eventos de teclado certos
+        try:
+            await inp.press_sequentially(texto[:15], delay=80)
+        except Exception:
+            # Fallback se o input não aceitar diretamente (opacity:0)
+            try:
+                await inp.click(force=True)
+            except Exception:
+                pass
+            await page.keyboard.type(texto[:15], delay=80)
+    else:
+        try:
+            await inp.fill("")
+            await inp.type(texto[:12], delay=50)
+        except Exception:
+            await page.keyboard.type(texto[:12], delay=50)
+
+    # Aguarda a API de busca responder (2.5s é suficiente para o backend MAG)
+    await page.wait_for_timeout(2500)
+
+    palavras = texto.split()
+    if not palavras:
+        return
+
+    search_words = " ".join(palavras[:2]) if len(palavras) > 1 else palavras[0]
+
+    # Estratégia 1: [role="option"] — React Select v3+ (AZOS, OMINT)
+    opt_exato = page.locator('[role="option"]').filter(
         has_text=re.compile(r'^\s*' + re.escape(texto) + r'\s*$', re.IGNORECASE)
     )
     if await opt_exato.count():
         await opt_exato.first.click()
-    else:
-        opts = page.locator(f'div[class*="option"]:has-text("{texto.split()[0]}")')
-        n = await opts.count()
-        if n:
-            await opts.nth(n - 1).click()
-        else:
-            await page.keyboard.press("ArrowDown")
-            await page.wait_for_timeout(150)
-            await page.keyboard.press("Enter")
+        await page.wait_for_timeout(400)
+        return
+
+    opts = page.locator('[role="option"]').filter(
+        has_text=re.compile(re.escape(search_words), re.IGNORECASE)
+    )
+    if await opts.count():
+        await opts.first.click()
+        await page.wait_for_timeout(400)
+        return
+
+    # Estratégia 1.5: [id*="--option-"] — React Select v1/v2 (MAG)
+    # As opções têm IDs no padrão "react-select-X--option-N" ou "{comp-id}--option-N".
+    rs_opts = page.locator('[id*="--option-"]')
+    rs_count = await rs_opts.count()
+    if rs_count == 0:
+        # Alternativa: procura divs dentro do listbox (role="listbox")
+        listbox = page.locator('[role="listbox"]')
+        if await listbox.count():
+            rs_opts = listbox.locator('div')
+            rs_count = await rs_opts.count()
+
+    if rs_count:
+        exact_rs = rs_opts.filter(
+            has_text=re.compile(r'^\s*' + re.escape(texto) + r'\s*$', re.IGNORECASE)
+        )
+        if await exact_rs.count():
+            await exact_rs.first.click()
+            await page.wait_for_timeout(400)
+            return
+        word_rs = rs_opts.filter(
+            has_text=re.compile(re.escape(search_words), re.IGNORECASE)
+        )
+        if await word_rs.count():
+            await word_rs.first.click()
+            await page.wait_for_timeout(400)
+            return
+
+    # Estratégia 2: click por texto visível (fallback amplo)
+    try:
+        await page.get_by_text(texto, exact=False).first.click(timeout=2_000)
+        await page.wait_for_timeout(400)
+        return
+    except Exception:
+        pass
+
+    # Estratégia 3: ArrowDown + Enter (fallback teclado)
+    await page.keyboard.press("ArrowDown")
+    await page.wait_for_timeout(500)
+    await page.keyboard.press("Enter")
     await page.wait_for_timeout(400)
 
 
@@ -169,9 +250,10 @@ async def _preencher_dados(page: Page, dados: dict):
     await page.wait_for_timeout(600)
     works_inp = page.locator('#quoter_form__your-data__works_as__input')
     if await works_inp.is_visible():
+        profissao = dados.get("profissao", "") or "Advogado"
         await _escolher_react_select(
             page, "quoter_form__your-data__works_as__input",
-            dados.get("profissao", "")
+            profissao
         )
 
     renda_raw = re.sub(r'\D', '', str(dados.get("renda_mensal", "5000")))
@@ -235,18 +317,24 @@ async def _adicionar_produto(page: Page, nome: str, capital):
 
     print(f"[mag] adicionando: {nome}", flush=True)
 
-    await _abrir_react_select(page, "react-select-2-input")
+    # O combobox de produto é o último input[aria-autocomplete="list"] na página
+    # (os primeiros 3 são dos dados do cliente que ficam no formulário).
+    combo = page.locator('input[aria-autocomplete="list"]').last
+    try:
+        await combo.scroll_into_view_if_needed(timeout=5_000)
+    except Exception:
+        pass
+    await combo.click(force=True)
     await page.wait_for_timeout(300)
-    await page.locator('#react-select-2-input').focus()
-    await page.keyboard.type(nome[:20], delay=60)
+    await combo.type(nome[:20], delay=60)
     await page.wait_for_timeout(2500)
 
-    opcoes = await page.locator('div[class*="option"]').all_inner_texts()
+    # Opções do dropdown via ARIA role (sem classe CSS)
+    opts_all = page.locator('[role="option"]')
+    opcoes = await opts_all.all_inner_texts()
     codigo = None
 
-    opt_exato = page.locator('div[class*="option"]').filter(
-        has_text=re.compile(re.escape(nome[:15]), re.IGNORECASE)
-    )
+    opt_exato = opts_all.filter(has_text=re.compile(re.escape(nome[:15]), re.IGNORECASE))
     if await opt_exato.count():
         opt_text = await opt_exato.first.inner_text()
         m = re.search(r'\((\d+)\)', opt_text)
@@ -258,7 +346,7 @@ async def _adicionar_produto(page: Page, nome: str, capital):
         m = re.search(r'\((\d+)\)', opt_text)
         if m:
             codigo = m.group(1)
-        await page.locator('div[class*="option"]').first.click()
+        await opts_all.first.click()
     else:
         await page.keyboard.press("Escape")
         print(f"  ⚠️ nenhuma opção para: {nome}", flush=True)
@@ -330,12 +418,29 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         if not ok:
             raise Exception("EDITAR SOLUÇÃO não encontrado")
 
-        # Descobre produtos disponíveis via dropdown vazio
-        await _abrir_react_select(page, "react-select-2-input")
-        inp = page.locator('#react-select-2-input')
-        await inp.fill("")
+        # Descobre produtos disponíveis abrindo o combobox de produto.
+        # Após EDITAR SOLUÇÃO, aparece um 4º input[aria-autocomplete="list"] além
+        # dos 3 do formulário de dados. Aguarda ele aparecer (até 15s).
+        try:
+            await page.wait_for_function(
+                "() => document.querySelectorAll('input[aria-autocomplete=\"list\"]').length > 3",
+                timeout=15_000,
+            )
+        except Exception:
+            await page.screenshot(path="/tmp/mag_no_product_combo.png")
+            print("[mag] combobox de produto não encontrado após EDITAR SOLUÇÃO", flush=True)
+
+        # Usa o último input[aria-autocomplete="list"] — é o de busca de produto
+        combo = page.locator('input[aria-autocomplete="list"]').last
+        try:
+            await combo.scroll_into_view_if_needed(timeout=5_000)
+        except Exception:
+            pass
+        await combo.click(force=True)
+        await page.wait_for_timeout(300)
+        await combo.fill("")
         await page.wait_for_timeout(2000)
-        all_opts = await page.locator('div[class*="option"]').all_inner_texts()
+        all_opts = await page.locator('[role="option"]').all_inner_texts()
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 
