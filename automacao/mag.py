@@ -329,8 +329,15 @@ async def _adicionar_produto(page: Page, nome: str, capital):
     await combo.type(nome[:20], delay=60)
     await page.wait_for_timeout(2500)
 
-    # Opções do dropdown via ARIA role (sem classe CSS)
+    # Multi-estratégia: [role="option"] (v3+) → [id*="--option-"] (v1/v2 MAG)
     opts_all = page.locator('[role="option"]')
+    if not await opts_all.count():
+        opts_all = page.locator('[id*="--option-"]')
+    if not await opts_all.count():
+        lb = page.locator('[role="listbox"]')
+        if await lb.count():
+            opts_all = lb.locator('div')
+
     opcoes = await opts_all.all_inner_texts()
     codigo = None
 
@@ -440,7 +447,10 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await page.wait_for_timeout(300)
         await combo.fill("")
         await page.wait_for_timeout(2000)
+        # [role="option"] = React Select v3+; [id*="--option-"] = v1/v2 (MAG)
         all_opts = await page.locator('[role="option"]').all_inner_texts()
+        if not all_opts:
+            all_opts = await page.locator('[id*="--option-"]').all_inner_texts()
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 

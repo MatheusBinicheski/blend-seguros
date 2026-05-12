@@ -91,6 +91,15 @@ async def _navegar_simulacao(page: Page, dados: dict):
     await page.keyboard.press("Tab")
     await page.wait_for_timeout(600)
 
+    # Fecha tooltip "Nome social" que pode aparecer após Tab
+    for _ in range(3):
+        btn_fechar = page.locator('button:has-text("Fechar")').first
+        if await btn_fechar.count() and await btn_fechar.is_visible():
+            await btn_fechar.click(force=True)
+            await page.wait_for_timeout(300)
+        else:
+            break
+
     # Nascimento (ISO yyyy-mm-dd)
     nasc_raw = dados.get("nascimento", "")
     if "/" in nasc_raw:
@@ -180,28 +189,78 @@ async def _navegar_simulacao(page: Page, dados: dict):
     # Continuar
     cont = page.locator('button[data-cy="btn-continuar"], button:has-text("Continuar")').first
     if await cont.count():
-        cls = await cont.get_attribute("class") or ""
         dis = await cont.get_attribute("disabled")
-        print(f"[omint] Continuar: disabled={dis!r} actionable={'q-btn--actionable' in cls}", flush=True)
+        print(f"[omint] Continuar: disabled={dis!r}", flush=True)
     try:
         await cont.click(timeout=3000)
     except Exception:
         await cont.click(force=True)
-    await page.wait_for_timeout(4000)
+
+    # Aguarda SPA navegar para produtos (até 15 s)
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        if "produtos" in page.url:
+            break
     print(f"[omint] pós-dados pessoais → {page.url}", flush=True)
 
 
 async def _extrair_coberturas(page: Page) -> list[Cobertura]:
     coberturas = []
     try:
-        # Aguarda a página de produtos renderizar (Quasar SPA + chamada à API)
+        # Aguarda a página de seleção de produtos renderizar (Quasar SPA)
         try:
             await page.wait_for_selector('text=Selecione o produto', timeout=15_000)
         except Exception:
             pass
         await page.wait_for_timeout(2000)
 
-        # Produtos aparecem como linhas "OMINT <NOME>" no inner_text
+        # Os produtos só aparecem após interagir com o seletor "Selecione o produto".
+        # Usa seletores baseados em texto e atributos nativos (role, aria-*).
+        achou = False
+        for tentativa in range(4):
+            try:
+                if tentativa == 0:
+                    # Clica pelo texto do label — seletor nativo por conteúdo de texto
+                    await page.locator('text=Selecione o produto').first.click(force=True)
+                elif tentativa == 1:
+                    # Clica no primeiro elemento com role="combobox" — ARIA nativo
+                    el = page.locator('[role="combobox"]').first
+                    if await el.count():
+                        await el.click(force=True)
+                    else:
+                        # Fallback: label cujo texto contenha "Selecione"
+                        await page.locator('label:has-text("Selecione")').first.click(force=True)
+                elif tentativa == 2:
+                    # Teclado: Tab para focar no seletor e Enter/Space para abrir
+                    await page.keyboard.press("Tab")
+                    await page.wait_for_timeout(300)
+                    await page.keyboard.press("Space")
+                elif tentativa == 3:
+                    # Dispara eventos nativos do DOM sem depender de seletor de classe
+                    await page.evaluate("""() => {
+                        const label = [...document.querySelectorAll('label, div, span')]
+                            .find(el => el.textContent.trim().startsWith('Selecione o produto'));
+                        if (label) {
+                            label.dispatchEvent(new MouseEvent('mousedown', {bubbles:true,cancelable:true}));
+                            label.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true,cancelable:true}));
+                            label.dispatchEvent(new MouseEvent('click',     {bubbles:true,cancelable:true}));
+                        }
+                    }""")
+            except Exception as exc:
+                print(f"[omint] tentativa {tentativa} falhou: {exc}", flush=True)
+
+            await page.wait_for_timeout(4000)
+            chk = await page.inner_text("body")
+            if any(l.strip().upper().startswith("OMINT ") for l in chk.splitlines()):
+                achou = True
+                print(f"[omint] produtos encontrados após tentativa {tentativa}", flush=True)
+                break
+            print(f"[omint] tentativa {tentativa} — produtos ainda não visíveis", flush=True)
+
+        if not achou:
+            await page.screenshot(path="/tmp/omint_fail.png")
+            print("[omint] screenshot salvo em /tmp/omint_fail.png", flush=True)
+
         vistos: set[str] = set()
         txt = await page.inner_text("body")
         for linha in txt.splitlines():

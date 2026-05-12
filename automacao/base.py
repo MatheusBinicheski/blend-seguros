@@ -72,23 +72,23 @@ async def resolver_captcha(page: Page) -> bool:
         token = result["code"]
         print(f"[captcha] token recebido ({len(token)} chars)", flush=True)
 
-        # Injeta o token na página
-        await page.evaluate(f"""(token) => {{
-            // reCAPTCHA v2
+        # Injeta o token e dispara o callback registrado no elemento reCAPTCHA
+        await page.evaluate("""(token) => {
+            // 1. Seta a textarea do reCAPTCHA v2
             const resp = document.getElementById('g-recaptcha-response');
-            if (resp) {{ resp.innerHTML = token; resp.value = token; }}
-            // hCaptcha
+            if (resp) { resp.innerHTML = token; resp.value = token; }
+            // 2. hCaptcha
             const hresp = document.querySelector('[name="h-captcha-response"]');
-            if (hresp) {{ hresp.value = token; }}
-            // Callback global do reCAPTCHA
-            if (window.grecaptcha?.enterprise) {{
-                try {{ window.grecaptcha.enterprise.execute(); }} catch(e) {{}}
-            }}
-            // Tenta disparar callback registrado
-            for (const key of Object.keys(window)) {{
-                if (key.startsWith('___grecaptcha') || key === '__recaptcha_api') continue;
-            }}
-        }}""", token)
+            if (hresp) { hresp.value = token; }
+            // 3. Dispara o data-callback do elemento (habilita botões como #btnAuth no MAG)
+            const rcEl = document.querySelector('[data-callback]');
+            if (rcEl) {
+                const cbName = rcEl.getAttribute('data-callback');
+                if (cbName && typeof window[cbName] === 'function') {
+                    window[cbName](token);
+                }
+            }
+        }""", token)
         await page.wait_for_timeout(1000)
         return True
 
