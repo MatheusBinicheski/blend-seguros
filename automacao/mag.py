@@ -1,6 +1,6 @@
 """Automação MAG Seguros — Venda Digital (contratacao/simulacao)."""
 from __future__ import annotations
-import asyncio, os, re
+import asyncio, os, re, unicodedata
 from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, resolver_captcha
 from models import Cobertura, ResultadoFase1, ResultadoCotacao
@@ -10,6 +10,14 @@ CNPJ  = os.getenv("MAG_CNPJ", "")
 SENHA = os.getenv("MAG_SENHA", "")
 
 _SESSOES: dict[str, dict] = {}
+
+
+def _sem_acento(s: str) -> str:
+    """Remove acentos: 'São Paulo' → 'Sao Paulo' (para bater com 'SAO PAULO')."""
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn'
+    )
 
 
 async def _abrir_react_select(page: Page, inp_id: str):
@@ -66,16 +74,17 @@ async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: b
 
     if teclado:
         # Para React Select assíncrono (busca via API ao digitar):
-        # press_sequentially foca o input E dispara os eventos de teclado certos
+        # A API MAG armazena sem acentos ("SAO PAULO"), então digitamos sem acentos
+        # para a busca funcionar: "São Paulo" → "Sao Paulo".
+        texto_busca = _sem_acento(texto)[:15]
         try:
-            await inp.press_sequentially(texto[:15], delay=80)
+            await inp.press_sequentially(texto_busca, delay=80)
         except Exception:
-            # Fallback se o input não aceitar diretamente (opacity:0)
             try:
                 await inp.click(force=True)
             except Exception:
                 pass
-            await page.keyboard.type(texto[:15], delay=80)
+            await page.keyboard.type(texto_busca, delay=80)
     else:
         try:
             await inp.fill("")
@@ -136,18 +145,34 @@ async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: b
             await page.wait_for_timeout(400)
             return
 
-    # Estratégia 2: click por texto visível (fallback amplo)
+    # Estratégia 2: click por texto sem acento
+    # MAG armazena opções em caixa alta sem acento: "SAO PAULO" não casa com "São Paulo".
+    # _sem_acento("São Paulo") → "Sao Paulo" → bate case-insensitivo com "SAO PAULO".
+    for termo in (_sem_acento(texto), _sem_acento(search_words), palavras[-1]):
+        try:
+            await page.get_by_text(termo, exact=False).first.click(timeout=1_500)
+            await page.wait_for_timeout(400)
+            return
+        except Exception:
+            pass
+
+    # Estratégia 3: Enter direto no input (opção já está destacada no React Select v1)
     try:
-        await page.get_by_text(texto, exact=False).first.click(timeout=2_000)
+        await inp.press("Enter")
         await page.wait_for_timeout(400)
         return
     except Exception:
         pass
 
-    # Estratégia 3: ArrowDown + Enter (fallback teclado)
-    await page.keyboard.press("ArrowDown")
-    await page.wait_for_timeout(500)
-    await page.keyboard.press("Enter")
+    # Estratégia 4: ArrowDown + Enter via inp.press() (garante foco correto)
+    try:
+        await inp.press("ArrowDown")
+        await page.wait_for_timeout(300)
+        await inp.press("Enter")
+    except Exception:
+        await page.keyboard.press("ArrowDown")
+        await page.wait_for_timeout(300)
+        await page.keyboard.press("Enter")
     await page.wait_for_timeout(400)
 
 
@@ -203,6 +228,8 @@ async def _preencher_dados(page: Page, dados: dict):
     await _escolher_react_select(
         page, "quoter_form__your-data__proposal_model_id__input", "VIDA TODA VD STOA"
     )
+    # Aguarda o formulário estabilizar após seleção do modelo
+    await page.wait_for_selector('#quoter_form__your-data__input_name', timeout=15_000)
 
     nome_inp = page.locator('#quoter_form__your-data__input_name')
     await nome_inp.click()
@@ -329,31 +356,36 @@ async def _adicionar_produto(page: Page, nome: str, capital):
     await combo.type(nome[:20], delay=60)
     await page.wait_for_timeout(2500)
 
-    # Multi-estratégia: [role="option"] (v3+) → [id*="--option-"] (v1/v2 MAG)
-    opts_all = page.locator('[role="option"]')
-    if not await opts_all.count():
-        opts_all = page.locator('[id*="--option-"]')
-    if not await opts_all.count():
-        lb = page.locator('[role="listbox"]')
-        if await lb.count():
-            opts_all = lb.locator('div')
+    # O dropdown de produto do MAG é uma grade customizada (não React Select padrão).
+    # JS puro: encontra o elemento visível com texto contendo o nome do produto.
+    nome_busca = nome[:20].lower()
+    result = await page.evaluate("""(nomeBusca) => {
+        for (const el of document.querySelectorAll('div, li, span')) {
+            if (el.children.length > 0 || !el.offsetParent) continue;
+            const txt = (el.textContent || '').trim();
+            if (txt.toLowerCase().includes(nomeBusca)) {
+                const m = txt.match(/\\((\\d+)\\)/);
+                el.click();
+                return { text: txt, code: m ? m[1] : null };
+            }
+        }
+        // Fallback: primeiro elemento visível com padrão "NOME (CODE)"
+        for (const el of document.querySelectorAll('div, li, span')) {
+            if (el.children.length > 0 || !el.offsetParent) continue;
+            const txt = (el.textContent || '').trim();
+            const m = txt.match(/^.+\\((\\d+)\\)$/);
+            if (m) {
+                el.click();
+                return { text: txt, code: m[1] };
+            }
+        }
+        return null;
+    }""", nome_busca)
 
-    opcoes = await opts_all.all_inner_texts()
     codigo = None
-
-    opt_exato = opts_all.filter(has_text=re.compile(re.escape(nome[:15]), re.IGNORECASE))
-    if await opt_exato.count():
-        opt_text = await opt_exato.first.inner_text()
-        m = re.search(r'\((\d+)\)', opt_text)
-        if m:
-            codigo = m.group(1)
-        await opt_exato.first.click()
-    elif opcoes:
-        opt_text = opcoes[0]
-        m = re.search(r'\((\d+)\)', opt_text)
-        if m:
-            codigo = m.group(1)
-        await opts_all.first.click()
+    if result:
+        codigo = result.get("code")
+        print(f"  [JS] selecionado: {result.get('text')}", flush=True)
     else:
         await page.keyboard.press("Escape")
         print(f"  ⚠️ nenhuma opção para: {nome}", flush=True)
@@ -425,20 +457,34 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         if not ok:
             raise Exception("EDITAR SOLUÇÃO não encontrado")
 
-        # Descobre produtos disponíveis abrindo o combobox de produto.
-        # Após EDITAR SOLUÇÃO, aparece um 4º input[aria-autocomplete="list"] além
-        # dos 3 do formulário de dados. Aguarda ele aparecer (até 15s).
+        # Aguarda o combobox de produto aparecer (seção "SELEÇÃO DE PRODUTOS").
+        # Os inputs de dados do cliente têm "your-data" no ID; o de produto não.
         try:
             await page.wait_for_function(
-                "() => document.querySelectorAll('input[aria-autocomplete=\"list\"]').length > 3",
+                """() => {
+                    const inputs = document.querySelectorAll('input[aria-autocomplete="list"]');
+                    return [...inputs].some(inp => !inp.id.includes('your-data'));
+                }""",
                 timeout=15_000,
             )
         except Exception:
             await page.screenshot(path="/tmp/mag_no_product_combo.png")
             print("[mag] combobox de produto não encontrado após EDITAR SOLUÇÃO", flush=True)
 
-        # Usa o último input[aria-autocomplete="list"] — é o de busca de produto
-        combo = page.locator('input[aria-autocomplete="list"]').last
+        # Localiza o input de produto (o que não tem "your-data" no ID)
+        all_aria = await page.locator('input[aria-autocomplete="list"]').all()
+        print(f"[mag] {len(all_aria)} inputs aria-autocomplete encontrados", flush=True)
+        # O combobox de produto é o ÚLTIMO input sem "your-data" no ID
+        # (antes dele aparece "periodicity" que também não tem "your-data")
+        produto_inputs = []
+        for inp in all_aria:
+            inp_id = await inp.get_attribute("id") or ""
+            if "your-data" not in inp_id:
+                produto_inputs.append(inp)
+        combo = produto_inputs[-1] if produto_inputs else page.locator('input[aria-autocomplete="list"]').last
+        combo_id = await combo.get_attribute("id") if combo else "none"
+        print(f"[mag] combo de produto id={combo_id!r}", flush=True)
+
         try:
             await combo.scroll_into_view_if_needed(timeout=5_000)
         except Exception:
@@ -447,10 +493,26 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await page.wait_for_timeout(300)
         await combo.fill("")
         await page.wait_for_timeout(2000)
-        # [role="option"] = React Select v3+; [id*="--option-"] = v1/v2 (MAG)
+        await page.screenshot(path="/tmp/mag_combo_aberto.png")
+
+        # Dropdown de produto = grade customizada (sem role="option").
+        # JS puro: extrai todos os elementos visíveis com padrão "NOME (CÓDIGO)".
         all_opts = await page.locator('[role="option"]').all_inner_texts()
         if not all_opts:
-            all_opts = await page.locator('[id*="--option-"]').all_inner_texts()
+            all_opts = await page.evaluate("""() => {
+                const results = [];
+                const seen = new Set();
+                for (const el of document.querySelectorAll('div, li, span')) {
+                    if (el.children.length > 0 || !el.offsetParent) continue;
+                    const txt = (el.textContent || '').trim();
+                    if (/^.+\\(\\d+\\)\\s*$/.test(txt) && !seen.has(txt)) {
+                        seen.add(txt);
+                        results.push(txt);
+                    }
+                }
+                return results;
+            }""")
+        print(f"[mag] all_opts ({len(all_opts)}): {all_opts[:3]}", flush=True)
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 

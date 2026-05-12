@@ -108,87 +108,100 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _preencher_dados_pessoais(page: Page, d: dict):
-    nome  = d.get("nome", "")
-    nasc  = d.get("nascimento", "")
-    cpf   = d.get("cpf", "")
-    tel   = d.get("telefone", "")
-    email = d.get("email", "")
-
+    # Nome
+    nome = d.get("nome", "")
     if nome:
-        for sel in ['input[name="name"]', 'input[name="fullName"]',
-                    'input[placeholder*="nome" i]', 'input[id*="name" i]']:
-            try:
-                inp = page.locator(sel).first
-                if await inp.count() and await inp.is_visible():
-                    await inp.click()
-                    await inp.fill(nome)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    break
-            except Exception:
-                pass
+        await page.locator('input[name="fullName"]').fill(nome)
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(200)
 
+    # Data de nascimento (campo mascarado dd/mm/aaaa)
+    nasc = d.get("nascimento", "")
     if nasc:
-        digits = nasc.replace("/", "").replace("-", "")
-        for sel in [
-            'input[name="birthdate"]', 'input[name="birthDate"]',
-            'input[placeholder*="nasc" i]', 'input[placeholder*="dd/mm" i]',
-            'input[id*="birth" i]',
-        ]:
-            try:
-                inp = page.locator(sel).first
-                if await inp.count() and await inp.is_visible():
-                    await inp.click()
-                    await inp.press_sequentially(digits, delay=50)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    break
-            except Exception:
-                pass
+        digits = re.sub(r"\D", "", nasc)
+        nasc_inp = page.locator('input[name="birthDate"]').first
+        await nasc_inp.click()
+        await nasc_inp.press_sequentially(digits, delay=80)
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(200)
 
-    if cpf:
-        cpf_digits = re.sub(r'\D', '', cpf)
-        for sel in ['input[name="cpf"]', 'input[placeholder*="cpf" i]', 'input[id*="cpf" i]']:
-            try:
-                inp = page.locator(sel).first
-                if await inp.count() and await inp.is_visible():
-                    await inp.click()
-                    await inp.press_sequentially(cpf_digits, delay=50)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    break
-            except Exception:
-                pass
+    # Altura em cm (ex: "175")
+    try:
+        h_inp = page.locator('input[name="height"]').first
+        if await h_inp.count() and await h_inp.is_visible():
+            await h_inp.click()
+            await h_inp.press_sequentially("175", delay=50)
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
 
-    if tel:
-        tel_digits = re.sub(r'\D', '', tel)
-        for sel in ['input[name="phone"]', 'input[placeholder*="fone" i]', 'input[id*="phone" i]']:
-            try:
-                inp = page.locator(sel).first
-                if await inp.count() and await inp.is_visible():
-                    await inp.click()
-                    await inp.press_sequentially(tel_digits, delay=50)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    break
-            except Exception:
-                pass
+    # Peso em kg
+    try:
+        w_inp = page.locator('input[name="weight"]').first
+        if await w_inp.count() and await w_inp.is_visible():
+            await w_inp.fill("70")
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
 
-    if email:
-        for sel in ['input[name="email"]', 'input[type="email"]']:
-            try:
-                inp = page.locator(sel).first
-                if await inp.count() and await inp.is_visible():
-                    await inp.click()
-                    await inp.fill(email)
-                    await page.keyboard.press("Tab")
-                    await page.wait_for_timeout(300)
-                    break
-            except Exception:
-                pass
+    # Profissão — Radix UI cmdk: trigger + busca + clique na opção
+    try:
+        prof_btn = page.locator('button[name="professionId"]').first
+        if await prof_btn.count() and await prof_btn.is_visible():
+            await prof_btn.click(force=True)
+            await page.wait_for_timeout(600)
+            prof_inp = page.locator('input[cmdk-input]').first
+            if await prof_inp.count():
+                await prof_inp.fill("Analista")
+                await page.wait_for_timeout(1000)
+                opt = page.locator('[cmdk-item][role="option"]').first
+                if await opt.count():
+                    await opt.click()
+                else:
+                    await page.keyboard.press("Escape")
+            else:
+                await page.keyboard.press("Escape")
+    except Exception:
+        pass
+    await page.wait_for_timeout(300)
 
-    await _preencher_selects(page, d)
-    await page.wait_for_timeout(500)
+    # Renda mensal
+    renda_val = d.get("renda_mensal", "5000")
+    try:
+        renda_int = int(float(str(renda_val).replace(",", ".").replace(" ", "")))
+    except Exception:
+        renda_int = 5000
+    try:
+        renda_inp = page.locator('input[name="monthlyIncome"]').first
+        if await renda_inp.count() and await renda_inp.is_visible():
+            await renda_inp.click()
+            await renda_inp.press_sequentially(str(renda_int), delay=50)
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
+
+    # Gênero: labels com input[name="gender"]
+    sexo = d.get("sexo", "M")
+    sexo_idx = 1 if sexo.upper() in ("M", "MASCULINO") else 0
+    try:
+        lbl = page.locator('label:has(input[name="gender"])').nth(sexo_idx)
+        if await lbl.count():
+            await lbl.click()
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
+
+    # Fumante: primeiro label = Não fumante
+    try:
+        lbl_smoke = page.locator('label:has(input[name="isSmoker"])').first
+        if await lbl_smoke.count():
+            await lbl_smoke.click()
+            await page.wait_for_timeout(200)
+    except Exception:
+        pass
 
 
 async def _preencher_selects(page: Page, d: dict):
