@@ -494,10 +494,43 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
             await combo.scroll_into_view_if_needed(timeout=5_000)
         except Exception:
             pass
+
+        async def _menu_aberto() -> bool:
+            return await page.evaluate("""() => {
+                const m = document.querySelector('.q-menu, [role="listbox"]');
+                if (m && m.offsetParent) return true;
+                return document.querySelectorAll('[role="option"]').length > 0;
+            }""")
+
+        # Tentativa 1: click no input + fill('')
         await combo.click(force=True)
         await page.wait_for_timeout(800)
         await combo.fill("")
-        await page.wait_for_timeout(6000)
+        await page.wait_for_timeout(3000)
+
+        # Tentativa 2: se menu não abriu, tenta click no Control (3 níveis acima)
+        if not await _menu_aberto():
+            print("[mag] menu não abriu via click+fill, tentando XPath Control", flush=True)
+            for xpath in ('xpath=../../..', 'xpath=../../../..', 'xpath=../..', 'xpath=..'):
+                try:
+                    ctrl = combo.locator(xpath)
+                    await ctrl.click(timeout=2_000, force=True)
+                    await page.wait_for_timeout(2_500)
+                    if await _menu_aberto():
+                        break
+                except Exception:
+                    continue
+
+        # Tentativa 3: keyboard ArrowDown para forçar abertura
+        if not await _menu_aberto():
+            print("[mag] menu ainda fechado, tentando keyboard ArrowDown", flush=True)
+            try:
+                await combo.focus()
+                await page.keyboard.press("ArrowDown")
+                await page.wait_for_timeout(2_500)
+            except Exception:
+                pass
+
         await page.screenshot(path="/tmp/mag_combo_aberto.png")
 
         # Dropdown de produto = grade customizada (sem role="option").

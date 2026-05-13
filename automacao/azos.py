@@ -40,8 +40,16 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
             if any(k in url for k in ("dashboard", "simulacao", "cotacao", "proposta", "contratacao.azos")):
                 break
             # Falha explícita: voltou para login com erro
-            if "login" in url and _ > 5:
-                raise Exception(f"Login AZOS rejeitado — URL: {url}")
+            if "login" in url and _ > 10:
+                # Captura erros visíveis na página para diagnóstico
+                diag = await page.evaluate("""() => {
+                    const errs = [...document.querySelectorAll('[role="alert"], .text-red-500, [class*="error"], [class*="invalid"]')]
+                        .map(e => (e.innerText||'').trim().substring(0,80)).filter(Boolean);
+                    const body = (document.body.innerText || '').substring(0, 200);
+                    const recaptcha = !!document.querySelector('iframe[src*="recaptcha"], .g-recaptcha');
+                    return {errs: errs.slice(0,3), body, recaptcha};
+                }""")
+                raise Exception(f"Login AZOS rejeitado — url={url}, recaptcha_visivel={diag.get('recaptcha')}, errs={diag.get('errs')}")
         else:
             raise Exception(f"Login AZOS timeout (90s) — URL: {page.url}")
         print(f"[azos] login ok → {page.url}", flush=True)
