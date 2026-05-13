@@ -79,7 +79,26 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
                 break
             await page.wait_for_timeout(1000)
         else:
-            raise Exception(f"AZOS bloqueado em dados-pessoais (15s) — form inválido? url={page.url}")
+            # Diagnóstico: estado do form quando bloqueado
+            diag = await page.evaluate("""() => {
+                const cont = [...document.querySelectorAll('button')]
+                    .find(b => /continuar/i.test(b.textContent||''));
+                const errs = [...document.querySelectorAll('[role="alert"], .text-red-500, [class*="error"]')]
+                    .map(e => (e.innerText||'').trim().substring(0,60)).filter(Boolean);
+                const fields = {};
+                for (const inp of document.querySelectorAll('input[name]')) {
+                    fields[inp.name] = (inp.value||'').substring(0,30);
+                }
+                const profBtn = document.querySelector('button[name="professionId"]');
+                return {
+                    cont_disabled: cont ? cont.disabled || cont.getAttribute('aria-disabled')==='true' : null,
+                    cont_exists: !!cont,
+                    errs: errs.slice(0,3),
+                    fields,
+                    prof_text: profBtn ? (profBtn.innerText||'').substring(0,40) : 'no-btn',
+                };
+            }""")
+            raise Exception(f"AZOS bloqueado dados-pessoais — cont_disabled={diag.get('cont_disabled')}, prof={diag.get('prof_text')}, errs={diag.get('errs')}, fields={diag.get('fields')}")
         print(f"[azos] pós-continuar → {page.url}", flush=True)
 
         await page.wait_for_load_state("domcontentloaded", timeout=20_000)
