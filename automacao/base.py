@@ -9,7 +9,16 @@ _CAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY", "")
 async def novo_browser(headless: bool = True, extra_args: list[str] | None = None) -> tuple[object, Browser, BrowserContext, Page]:
     """Abre Chromium e retorna (playwright, browser, context, page)."""
     pw = await async_playwright().start()
-    args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
+    args = [
+        "--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled",
+        # Flags de redução de RAM para Railway (instância pequena)
+        "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,IsolateOrigins,site-per-process",
+        "--disable-background-networking", "--disable-sync", "--disable-default-apps",
+        "--disable-component-extensions-with-background-pages",
+        "--no-first-run", "--disable-renderer-backgrounding",
+        "--blink-settings=imagesEnabled=false",
+        "--js-flags=--max-old-space-size=384",
+    ]
     if extra_args:
         args.extend(extra_args)
     browser = await pw.chromium.launch(

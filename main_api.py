@@ -194,9 +194,9 @@ async def _executar_fase1(job_id: str, dados: dict):
     job["status"] = "coletando"
     job["msg"] = "Conectando às seguradoras..."
 
-    # Railway tem RAM limitada — rodar 3 Chromium juntos causa OOM.
-    # Sem 2: AZOS+MAG (ambas headless=True) podem rodar paralelas; OMINT (headless=False, mais pesada) aguarda uma terminar.
-    sem = asyncio.Semaphore(2)
+    # Railway tem RAM limitada — até 2 Chromium juntos causaram OOM.
+    # Sem 1: executa uma seguradora por vez (AZOS → MAG → OMINT). ~9min total mas estável.
+    sem = asyncio.Semaphore(1)
 
     async def coletar(seg: str):
         mod = MODULOS[seg]
