@@ -315,45 +315,63 @@ async function pollStatus() {
 
 // ── Carrega e exibe coberturas ─────────────────────────────────────────────────
 async function carregarCoberturas() {
-  COBERTURAS_DATA = await fetch(`/coberturas/${JOB_ID}`).then(r => r.json());
+  let raw;
+  try {
+    const resp = await fetch(`/coberturas/${JOB_ID}`);
+    raw = await resp.json();
+  } catch(err) {
+    document.getElementById('prog-msg').textContent = 'Erro ao carregar coberturas: ' + err;
+    return;
+  }
+  COBERTURAS_DATA = raw;
 
   const tbody = document.getElementById('tbody-coberturas');
   tbody.innerHTML = '';
+  let totalLinhas = 0;
 
-  for (const [seg, info] of Object.entries(COBERTURAS_DATA)) {
-    // Atualiza cards de status
-    const cnt = info.coberturas?.length || 0;
-    document.getElementById(`cnt-${seg}`).textContent = cnt;
-    document.getElementById(`st-${seg}`).textContent = info.ok ? `${cnt} coberturas` : ('❌ ' + (info.erro || 'erro'));
+  for (const seg of Object.keys(COBERTURAS_DATA)) {
+    const info = COBERTURAS_DATA[seg];
+    const cobs = Array.isArray(info.coberturas) ? info.coberturas : [];
+    const cnt = cobs.length;
 
-    if (!info.ok || !info.coberturas?.length) continue;
+    // Atualiza card de status (só atualiza se elemento existir)
+    const elCnt = document.getElementById('cnt-' + seg);
+    const elSt  = document.getElementById('st-' + seg);
+    if (elCnt) elCnt.textContent = cnt;
+    if (elSt)  elSt.textContent  = info.ok ? cnt + ' coberturas' : ('❌ ' + (info.erro || 'erro').substring(0, 40));
 
-    for (const cob of info.coberturas) {
-      const tr = document.createElement('tr');
-      tr.dataset.seg = seg;
-      tr.dataset.cobId = cob.id;
-      tr.dataset.sessionId = info.session_id || '';
-      tr.dataset.nome = cob.nome;
-      tr.dataset.valorMin = cob.valor_min;
-      tr.dataset.premioRef = cob.premio_referencia || 0;
-      const step = cob.valor_min >= 10000 ? 10000 : 1000;
-      tr.innerHTML = `
-        <td><input type="checkbox" class="check-select" onchange="atualizarResumo()"/></td>
-        <td><strong>${cob.nome}</strong></td>
-        <td><span class="badge badge-${seg}">${seg.toUpperCase()}</span></td>
-        <td>${fmt(cob.valor_min)}</td>
-        <td>${fmt(cob.valor_max)}</td>
-        <td style="color:#94a3b8;font-size:.75rem">calculado na cotação</td>
-        <td>
-          <input type="number" class="valor-input capital-input"
-            value="${Math.round(cob.valor_min)}"
-            min="${cob.valor_min}" max="${cob.valor_max}" step="${step}"
-            onchange="atualizarResumo()"/>
-        </td>`;
-      tbody.appendChild(tr);
+    if (!info.ok || cnt === 0) continue;
+
+    for (let i = 0; i < cobs.length; i++) {
+      const cob = cobs[i];
+      try {
+        const tr = document.createElement('tr');
+        tr.dataset.seg = seg;
+        tr.dataset.sessionId = info.session_id || '';
+        tr.dataset.nome = cob.nome || '';
+        const vMin = Number(cob.valor_min) || 10000;
+        const vMax = Number(cob.valor_max) || 3000000;
+        const step = vMin >= 10000 ? 10000 : 1000;
+        tr.innerHTML =
+          '<td><input type="checkbox" class="check-select" onchange="atualizarResumo()"/></td>' +
+          '<td><strong>' + (cob.nome || '') + '</strong></td>' +
+          '<td><span class="badge badge-' + seg + '">' + seg.toUpperCase() + '</span></td>' +
+          '<td>' + fmt(vMin) + '</td>' +
+          '<td>' + fmt(vMax) + '</td>' +
+          '<td style="color:#94a3b8;font-size:.75rem">a calcular</td>' +
+          '<td><input type="number" class="valor-input capital-input"' +
+          ' value="' + Math.round(vMin) + '"' +
+          ' min="' + vMin + '" max="' + vMax + '" step="' + step + '"' +
+          ' onchange="atualizarResumo()"/></td>';
+        tbody.appendChild(tr);
+        totalLinhas++;
+      } catch(rowErr) {
+        console.error('Erro na linha ' + seg + '[' + i + ']:', rowErr, cob);
+      }
     }
   }
 
+  console.log('carregarCoberturas: ' + totalLinhas + ' linhas adicionadas', Object.keys(COBERTURAS_DATA));
   hide('sec-progresso');
   show('sec-blend');
   atualizarResumo();
