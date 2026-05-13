@@ -502,74 +502,52 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
                 return document.querySelectorAll('[role="option"]').length > 0;
             }""")
 
-        # Tentativa 1: dispatchEvent mousedown direto (React Select escuta mousedown, não click)
+        # Combo de produto MAG só lista resultados quando você digita.
+        # Itera pelo alfabeto + dígitos para coletar todos os produtos disponíveis.
+        await combo.click(force=True)
+        await page.wait_for_timeout(500)
+
+        async def _extrair_visiveis() -> list:
+            opts = await page.locator('[role="option"]').all_inner_texts()
+            if not opts:
+                opts = await page.evaluate("""() => {
+                    const results = [];
+                    const seen = new Set();
+                    for (const el of document.querySelectorAll('div, li, span')) {
+                        if (el.children.length > 0 || !el.offsetParent) continue;
+                        const txt = (el.textContent || '').trim();
+                        if (/^.+\\(\\d+\\)\\s*$/.test(txt) && !seen.has(txt)) {
+                            seen.add(txt);
+                            results.push(txt);
+                        }
+                    }
+                    return results;
+                }""")
+            return opts
+
+        coletados: set[str] = set()
+        # Letras mais comuns em nomes de produtos MAG: V (Vida), A (AP, Assist), S (Sucessão), C, P, R, M, F, D, B...
+        for letra in "VASCPRMFDBINEOTLG":
+            try:
+                await combo.fill("")
+                await page.wait_for_timeout(400)
+                await combo.type(letra, delay=60)
+                await page.wait_for_timeout(1_500)
+                novos = await _extrair_visiveis()
+                if novos:
+                    for o in novos:
+                        coletados.add(o)
+                    print(f"[mag] letra '{letra}' → {len(novos)} opts (total {len(coletados)})", flush=True)
+            except Exception as e:
+                print(f"[mag] letra '{letra}' falhou: {e}", flush=True)
+
+        all_opts = sorted(coletados)
+        print(f"[mag] all_opts total ({len(all_opts)})", flush=True)
+        await page.screenshot(path="/tmp/mag_combo_aberto.png")
         try:
-            await combo.evaluate("""(el) => {
-                el.focus();
-                el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, button:0}));
-                el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, button:0}));
-                el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, button:0}));
-            }""")
-            await page.wait_for_timeout(2_500)
+            await combo.fill("")
         except Exception:
             pass
-
-        # Tentativa 2: click no input + fill('')
-        if not await _menu_aberto():
-            print("[mag] menu não abriu via mousedown direto, tentando click+fill", flush=True)
-            try:
-                await combo.click(force=True)
-                await page.wait_for_timeout(500)
-                await combo.fill("")
-                await page.wait_for_timeout(2500)
-            except Exception:
-                pass
-
-        # Tentativa 3: mousedown no Control parent via JS (3 níveis acima)
-        if not await _menu_aberto():
-            print("[mag] tentando mousedown no Control parent via JS", flush=True)
-            try:
-                await combo.evaluate("""(el) => {
-                    let ctrl = el.parentElement?.parentElement?.parentElement;
-                    if (ctrl) {
-                        ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, button:0}));
-                        ctrl.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, button:0}));
-                    }
-                }""")
-                await page.wait_for_timeout(2_500)
-            except Exception:
-                pass
-
-        # Tentativa 4: keyboard ArrowDown como último recurso
-        if not await _menu_aberto():
-            print("[mag] tentando keyboard ArrowDown", flush=True)
-            try:
-                await combo.focus()
-                await page.keyboard.press("ArrowDown")
-                await page.wait_for_timeout(2_500)
-            except Exception:
-                pass
-
-        await page.screenshot(path="/tmp/mag_combo_aberto.png")
-
-        # Dropdown de produto = grade customizada (sem role="option").
-        # JS puro: extrai todos os elementos visíveis com padrão "NOME (CÓDIGO)".
-        all_opts = await page.locator('[role="option"]').all_inner_texts()
-        if not all_opts:
-            all_opts = await page.evaluate("""() => {
-                const results = [];
-                const seen = new Set();
-                for (const el of document.querySelectorAll('div, li, span')) {
-                    if (el.children.length > 0 || !el.offsetParent) continue;
-                    const txt = (el.textContent || '').trim();
-                    if (/^.+\\(\\d+\\)\\s*$/.test(txt) && !seen.has(txt)) {
-                        seen.add(txt);
-                        results.push(txt);
-                    }
-                }
-                return results;
-            }""")
-        print(f"[mag] all_opts ({len(all_opts)}): {all_opts[:3]}", flush=True)
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 
