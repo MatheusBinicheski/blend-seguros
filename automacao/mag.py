@@ -453,6 +453,15 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await _login(page)
         await _preencher_dados(page, dados)
 
+        # Verifica erros de validação do form antes de tentar EDITAR SOLUÇÃO
+        form_errs = await page.evaluate("""() => {
+            return [...document.querySelectorAll('.error-message, [class*="error-message"]')]
+                .map(e => (e.innerText||'').trim())
+                .filter(t => t && t.length > 5 && t.length < 200);
+        }""")
+        if form_errs:
+            raise Exception(f"MAG form inválido: {form_errs[0]}")
+
         ok = await _editar_solucao(page)
         if not ok:
             raise Exception("EDITAR SOLUÇÃO não encontrado")

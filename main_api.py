@@ -32,6 +32,32 @@ def _cpf_valido(cpf: str) -> bool:
     return True
 
 
+def _nome_valido(nome: str) -> bool:
+    """MAG rejeita nomes com números ou caracteres especiais — apenas letras/espaços/acentos."""
+    import re as _re
+    nome = nome.strip()
+    if not nome or len(nome.split()) < 2:
+        return False
+    return bool(_re.fullmatch(r"[A-Za-zÀ-ÿ\s'\-]+", nome))
+
+
+def _data_valida(data: str) -> bool:
+    """Aceita DD/MM/AAAA com idade entre 18 e 80 anos."""
+    import re as _re
+    digits = _re.sub(r"\D", "", data)
+    if len(digits) != 8:
+        return False
+    try:
+        d, m, y = int(digits[:2]), int(digits[2:4]), int(digits[4:8])
+        from datetime import date
+        nasc = date(y, m, d)
+        hoje = date.today()
+        idade = hoje.year - nasc.year - ((hoje.month, hoje.day) < (nasc.month, nasc.day))
+        return 18 <= idade <= 80
+    except Exception:
+        return False
+
+
 def _novo_job() -> tuple[str, dict]:
     jid = str(uuid.uuid4())
     job = {
@@ -109,7 +135,17 @@ async def cotar(
     if not _cpf_valido(cpf):
         return templates.TemplateResponse("erro.html", {
             "request": request,
-            "msg": f"CPF '{cpf}' é inválido. MAG Seguros valida CPF antes de gerar cotação — use um CPF válido.",
+            "msg": f"CPF '{cpf}' é inválido. Use um CPF válido (a MAG valida o checksum).",
+        })
+    if not _nome_valido(nome):
+        return templates.TemplateResponse("erro.html", {
+            "request": request,
+            "msg": f"Nome '{nome}' é inválido. A MAG bloqueia números e caracteres especiais — use apenas letras (ex: 'João Silva').",
+        })
+    if not _data_valida(nascimento):
+        return templates.TemplateResponse("erro.html", {
+            "request": request,
+            "msg": f"Data '{nascimento}' inválida ou idade fora do range 18-80 anos.",
         })
     _limpar_jobs_antigos()
     jid, job = _novo_job()

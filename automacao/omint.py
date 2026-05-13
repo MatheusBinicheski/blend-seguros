@@ -102,13 +102,15 @@ async def _navegar_simulacao(page: Page, dados: dict):
         else:
             break
 
-    # Nascimento (ISO yyyy-mm-dd)
+    # Nascimento (ISO yyyy-mm-dd) — parseia apenas dígitos (robusto a separadores/whitespace)
     nasc_raw = dados.get("nascimento", "")
-    if "/" in nasc_raw:
-        d, m, y = nasc_raw.split("/")
-        nasc_iso = f"{y}-{m}-{d}"
-    else:
+    digits = re.sub(r"\D", "", nasc_raw)
+    if len(digits) == 8:
+        nasc_iso = f"{digits[4:8]}-{digits[2:4]}-{digits[:2]}"
+    elif re.match(r"^\d{4}-\d{2}-\d{2}$", nasc_raw):
         nasc_iso = nasc_raw
+    else:
+        raise Exception(f"OMINT data inválida: '{nasc_raw}' (esperado DD/MM/AAAA)")
     nasc_inp = page.locator('input[type="date"]').first
     await nasc_inp.wait_for(state="visible", timeout=10_000)
     await nasc_inp.click()

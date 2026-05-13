@@ -78,8 +78,30 @@ function cpfValido(cpf) {
 function validarForm(form) {
   var cpf = form.cpf.value.trim();
   if (cpf && !cpfValido(cpf)) {
-    alert('CPF inválido. O MAG Seguros valida o CPF — use um CPF válido para gerar cotações.');
+    alert('CPF inválido. Use um CPF válido (a MAG verifica o checksum).');
     form.cpf.focus();
+    return false;
+  }
+  var nome = form.nome.value.trim();
+  if (!/^[A-Za-zÀ-ÿ\s'\-]+$/.test(nome) || nome.split(/\s+/).length < 2) {
+    alert('Nome inválido. Use apenas letras e ao menos nome + sobrenome (ex: João Silva). A MAG bloqueia números e caracteres especiais.');
+    form.nome.focus();
+    return false;
+  }
+  var nasc = form.nascimento.value.trim();
+  var d = nasc.replace(/\D/g, '');
+  if (d.length !== 8) {
+    alert('Data de nascimento inválida. Use o formato DD/MM/AAAA.');
+    form.nascimento.focus();
+    return false;
+  }
+  var dia = parseInt(d.substr(0,2)), mes = parseInt(d.substr(2,2)), ano = parseInt(d.substr(4));
+  var hoje = new Date();
+  var nascDate = new Date(ano, mes-1, dia);
+  var idade = hoje.getFullYear() - ano - ((hoje.getMonth() < mes-1) || (hoje.getMonth() === mes-1 && hoje.getDate() < dia) ? 1 : 0);
+  if (idade < 18 || idade > 80) {
+    alert('A idade deve estar entre 18 e 80 anos. Idade atual: ' + idade + '.');
+    form.nascimento.focus();
     return false;
   }
   return true;
