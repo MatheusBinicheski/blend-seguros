@@ -1,27 +1,20 @@
 """
-Blend Seguros API
-─────────────────
-POST /cotar              → inicia coleta paralela nas 4 seguradoras
-GET  /status/{job_id}    → progresso do job
-GET  /coberturas/{job_id}→ coberturas disponíveis (quando fase1 concluída)
-POST /finalizar/{job_id} → finaliza blend com seleções do corretor
-GET  /resultado/{job_id} → resultado final
-GET  /                   → interface web do corretor
+Blend Seguros API — renderização server-side com Jinja2
 """
-import asyncio, time, uuid, os
+import asyncio, time, uuid, os, json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Form, BackgroundTasks, HTTPException
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi import FastAPI, Form, Request, BackgroundTasks
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
 load_dotenv()
 
 from automacao import azos, mag, omint
 
-# ── Estado em memória ─────────────────────────────────────────────────────────
 JOBS: dict[str, dict] = {}
-JOB_TTL = 1800  # 30 min
+JOB_TTL = 1800
 
 
 def _novo_job() -> tuple[str, dict]:
@@ -29,11 +22,10 @@ def _novo_job() -> tuple[str, dict]:
     job = {
         "id": jid,
         "status": "pending",
-        "pct": 0,
         "msg": "Aguardando...",
         "created_at": time.time(),
-        "fase1": {},       # {seguradora: ResultadoFase1}
-        "resultado": [],   # [ResultadoCotacao]
+        "fase1": {},
+        "resultado": [],
         "erro": None,
     }
     JOBS[jid] = job
@@ -42,48 +34,40 @@ def _novo_job() -> tuple[str, dict]:
 
 def _limpar_jobs_antigos():
     agora = time.time()
-    antigos = [jid for jid, j in JOBS.items() if agora - j["created_at"] > JOB_TTL]
-    for jid in antigos:
+    for jid in [k for k, j in JOBS.items() if agora - j["created_at"] > JOB_TTL]:
         JOBS.pop(jid, None)
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
 
+
 app = FastAPI(title="Blend Seguros", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
+MODULOS = {"azos": azos, "mag": mag, "omint": omint}
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Passo 1: formulário ───────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def index():
-    with open("static/index.html", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read(), headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-        })
-
-
-@app.get("/health")
-async def health():
-    return {"ok": True}
+async def index(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 
 @app.post("/cotar")
 async def cotar(
     background_tasks: BackgroundTasks,
-    nome:       str = Form(...),
+    nome:      str = Form(...),
     nascimento: str = Form(...),
-    cpf:        str = Form(""),
-    email:      str = Form(""),
-    telefone:   str = Form(""),
-    renda:      str = Form("5000"),
-    sexo:       str = Form("M"),
-    profissao:  str = Form("Advogado"),
-    ocupacao:   str = Form("Profissional Liberal"),
+    cpf:       str = Form(""),
+    email:     str = Form(""),
+    telefone:  str = Form(""),
+    renda:     str = Form("5000"),
+    sexo:      str = Form("M"),
+    profissao: str = Form("Advogado"),
+    ocupacao:  str = Form("Profissional Liberal"),
 ):
     _limpar_jobs_antigos()
     jid, job = _novo_job()
@@ -93,154 +77,151 @@ async def cotar(
         sexo=sexo, profissao=profissao, ocupacao=ocupacao,
     )
     background_tasks.add_task(_executar_fase1, jid, dados)
-    return {"job_id": jid}
+    return RedirectResponse(f"/aguardando/{jid}", status_code=303)
 
 
-@app.get("/status/{job_id}")
-async def status(job_id: str):
+# ── Passo 2: página de espera (auto-refresh Python-side) ─────────────────────
+
+@app.get("/aguardando/{job_id}", response_class=HTMLResponse)
+async def aguardando(request: Request, job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        raise HTTPException(404, "Job não encontrado")
-    return {
-        "status":  job["status"],
-        "pct":     job["pct"],
-        "msg":     job["msg"],
-        "erro":    job["erro"],
-    }
+        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
+    if job["status"] == "fase1_ok":
+        return RedirectResponse(f"/coberturas/{job_id}", status_code=303)
+    if job["status"] == "erro":
+        return templates.TemplateResponse("erro.html", {"request": request, "msg": job.get("erro", "Erro desconhecido.")})
+    return templates.TemplateResponse("aguardando.html", {
+        "request": request,
+        "job_id": job_id,
+        "msg": job.get("msg", "Processando..."),
+    })
 
 
-@app.get("/coberturas/{job_id}")
-async def coberturas(job_id: str):
+# ── Passo 3: tabela de coberturas (renderizada pelo Python) ───────────────────
+
+@app.get("/coberturas/{job_id}", response_class=HTMLResponse)
+async def coberturas(request: Request, job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        raise HTTPException(404, "Job não encontrado")
-    if job["status"] not in ("fase1_ok", "finalizado"):
-        raise HTTPException(409, f"Fase 1 ainda não concluída: {job['status']}")
+        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
+    if job["status"] != "fase1_ok":
+        return RedirectResponse(f"/aguardando/{job_id}", status_code=303)
 
-    resultado = {}
+    seguradoras = []
+    todas_coberturas = []
     for seg, r in job["fase1"].items():
-        resultado[seg] = {
-            "ok":      r.ok,
-            "erro":    r.erro,
-            "session_id": r.session_id,
-            "coberturas": [
-                {
-                    "id":               c.id,
-                    "nome":             c.nome,
-                    "descricao":        c.descricao,
-                    "valor_min":        c.valor_min,
-                    "valor_max":        c.valor_max,
-                    "premio_referencia": c.premio_referencia,
-                    "seguradora":       c.seguradora,
-                }
-                for c in r.coberturas
-            ],
-        }
-    return resultado
+        seguradoras.append({
+            "nome": seg.upper(),
+            "ok": r.ok,
+            "n": len(r.coberturas),
+            "erro": (r.erro or "")[:60] if not r.ok else "",
+        })
+        for c in r.coberturas:
+            todas_coberturas.append({
+                "seg": seg,
+                "session_id": r.session_id or "",
+                "id": c.id,
+                "nome": c.nome,
+                "valor_min": int(c.valor_min),
+                "valor_max": int(c.valor_max),
+                "step": 10000 if c.valor_min >= 10000 else 1000,
+            })
 
+    return templates.TemplateResponse("coberturas.html", {
+        "request": request,
+        "job_id": job_id,
+        "seguradoras": seguradoras,
+        "coberturas": todas_coberturas,
+    })
+
+
+# ── Passo 4: finalizar blend ──────────────────────────────────────────────────
 
 @app.post("/finalizar/{job_id}")
 async def finalizar(
-    job_id: str,
     background_tasks: BackgroundTasks,
-    selecoes: str = Form(...),   # JSON string: [{seguradora, session_id, nome, valor}]
+    job_id: str,
+    selecoes: str = Form(...),
 ):
-    import json
     job = JOBS.get(job_id)
     if not job:
-        raise HTTPException(404, "Job não encontrado")
-
-    try:
-        lista = json.loads(selecoes)
-    except Exception:
-        raise HTTPException(400, "selecoes deve ser JSON válido")
-
+        return RedirectResponse("/", status_code=303)
+    lista = json.loads(selecoes)
     job["status"] = "finalizando"
-    job["pct"] = 60
-    job["msg"] = "Finalizando cotações nas seguradoras selecionadas..."
+    job["msg"] = "Finalizando cotações..."
     background_tasks.add_task(_executar_fase2, job_id, lista)
-    return {"ok": True, "job_id": job_id}
+    return RedirectResponse(f"/resultado/{job_id}", status_code=303)
 
 
-@app.get("/resultado/{job_id}")
-async def resultado(job_id: str):
+# ── Passo 5: resultado ────────────────────────────────────────────────────────
+
+@app.get("/resultado/{job_id}", response_class=HTMLResponse)
+async def resultado(request: Request, job_id: str):
     job = JOBS.get(job_id)
     if not job:
-        raise HTTPException(404, "Job não encontrado")
-    if job["status"] != "finalizado":
-        raise HTTPException(409, f"Ainda não finalizado: {job['status']}")
+        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
+    if job["status"] == "finalizando":
+        return templates.TemplateResponse("aguardando.html", {
+            "request": request,
+            "job_id": job_id,
+            "msg": job.get("msg", "Finalizando..."),
+            "redirect": f"/resultado/{job_id}",
+        })
+    cotacoes = [
+        {
+            "seguradora": c.seguradora.upper(),
+            "cobertura_nome": c.cobertura_nome,
+            "valor_capital": int(c.valor_capital),
+            "premio_mensal": c.premio_mensal,
+            "link_proposta": c.link_proposta or "",
+            "erro": c.erro or "",
+        }
+        for c in job.get("resultado", [])
+    ]
+    return templates.TemplateResponse("resultado.html", {
+        "request": request,
+        "cotacoes": cotacoes,
+    })
 
-    return {
-        "status": "finalizado",
-        "cotacoes": [
-            {
-                "seguradora":      c.seguradora,
-                "cobertura_nome":  c.cobertura_nome,
-                "valor_capital":   c.valor_capital,
-                "premio_mensal":   c.premio_mensal,
-                "link_proposta":   c.link_proposta,
-                "numero_proposta": c.numero_proposta,
-                "erro":            c.erro,
-            }
-            for c in job["resultado"]
-        ],
-    }
 
-
-# ── Lógica de background ──────────────────────────────────────────────────────
-
-MODULOS = {
-    "azos":  azos,
-    "mag":   mag,
-    "omint": omint,
-}
-
+# ── Background tasks ──────────────────────────────────────────────────────────
 
 async def _executar_fase1(job_id: str, dados: dict):
     job = JOBS.get(job_id)
     if not job:
         return
-
     job["status"] = "coletando"
-    job["pct"] = 5
-    job["msg"] = "Conectando às seguradoras em paralelo..."
+    job["msg"] = "Conectando às seguradoras..."
 
     async def coletar(seg: str):
         mod = MODULOS[seg]
         for tentativa in range(3):
-            job["msg"] = f"[{seg}] coletando coberturas{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
+            job["msg"] = f"[{seg}] coletando{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
             try:
                 result = await mod.fase1_coletar_coberturas(dados, headless=True)
                 if result.ok:
                     job["fase1"][seg] = result
-                    print(f"[blend] fase1 {seg} → ok (tentativa {tentativa+1})", flush=True)
+                    print(f"[blend] {seg} ok (tentativa {tentativa+1})", flush=True)
                     return
-                print(f"[blend] fase1 {seg} tentativa {tentativa+1} falhou: {result.erro}", flush=True)
+                print(f"[blend] {seg} tentativa {tentativa+1} falhou: {result.erro}", flush=True)
             except Exception as e:
-                print(f"[blend] fase1 {seg} tentativa {tentativa+1} EXCEÇÃO: {e}", flush=True)
+                print(f"[blend] {seg} tentativa {tentativa+1} exceção: {e}", flush=True)
             if tentativa < 2:
                 await asyncio.sleep(3)
-        # Todas tentativas falharam
         from models import ResultadoFase1
-        job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro=f"Falhou após 3 tentativas")
-        print(f"[blend] fase1 {seg} → esgotado", flush=True)
+        job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro="Falhou após 3 tentativas")
 
-    # Executa todas em paralelo
     await asyncio.gather(*[coletar(seg) for seg in MODULOS])
-
-    total = len(job["fase1"])
-    ok    = sum(1 for r in job["fase1"].values() if r.ok)
+    ok = sum(1 for r in job["fase1"].values() if r.ok)
     job["status"] = "fase1_ok"
-    job["pct"]    = 50
-    job["msg"]    = f"Coberturas coletadas: {ok}/{total} seguradoras ok. Monte o blend!"
+    job["msg"] = f"{ok}/{len(MODULOS)} seguradoras ok"
 
 
 async def _executar_fase2(job_id: str, selecoes: list[dict]):
     job = JOBS.get(job_id)
     if not job:
         return
-
-    # Agrupa seleções por seguradora
     por_seg: dict[str, list[dict]] = {}
     sess_ids: dict[str, str] = {}
     for s in selecoes:
@@ -256,21 +237,12 @@ async def _executar_fase2(job_id: str, selecoes: list[dict]):
             return await mod.fase2_finalizar(sess_ids.get(seg, ""), sels)
         except Exception as e:
             from models import ResultadoCotacao
-            return [ResultadoCotacao(
-                seguradora=seg, cobertura_nome="Erro", valor_capital=0,
-                premio_mensal=0, erro=str(e)
-            )]
+            return [ResultadoCotacao(seguradora=seg, cobertura_nome="Erro", valor_capital=0, premio_mensal=0, erro=str(e))]
 
-    resultados_por_seg = await asyncio.gather(
-        *[finalizar_seg(seg, sels) for seg, sels in por_seg.items()]
-    )
-
-    todas = [c for lista in resultados_por_seg for c in lista]
-    job["resultado"] = todas
-    job["status"]    = "finalizado"
-    job["pct"]       = 100
-    job["msg"]       = f"Blend finalizado! {len(todas)} cotações geradas."
-    print(f"[blend] fase2 concluída: {len(todas)} cotações", flush=True)
+    resultados = await asyncio.gather(*[finalizar_seg(seg, sels) for seg, sels in por_seg.items()])
+    job["resultado"] = [c for lista in resultados for c in lista]
+    job["status"] = "finalizado"
+    job["msg"] = f"{len(job['resultado'])} cotações geradas"
 
 
 if __name__ == "__main__":

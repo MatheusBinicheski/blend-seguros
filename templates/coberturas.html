@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Selecionar Coberturas — Blend Seguros{% endblock %}
+{% block content %}
+<h1>Selecionar Coberturas</h1>
+
+<div class="card">
+  <h2>Seguradoras consultadas</h2>
+  <table>
+    <thead><tr><th>Seguradora</th><th>Status</th><th>Coberturas</th><th>Detalhe</th></tr></thead>
+    <tbody>
+      {% for s in seguradoras %}
+      <tr>
+        <td><span class="tag tag-{{ s.nome | lower }}">{{ s.nome }}</span></td>
+        <td>
+          {% if s.ok %}<span class="badge badge-ok">OK</span>
+          {% else %}<span class="badge badge-err">ERRO</span>{% endif %}
+        </td>
+        <td>{{ s.n }}</td>
+        <td style="color:#666; font-size:.85rem">{{ s.erro }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if coberturas %}
+<form method="post" action="/finalizar/{{ job_id }}">
+  <div class="card">
+    <h2>Coberturas disponíveis — selecione e defina o capital</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:40px">Sel.</th>
+          <th>Seguradora</th>
+          <th>Cobertura</th>
+          <th style="width:220px">Capital segurado</th>
+          <th style="width:100px">Mín</th>
+          <th style="width:100px">Máx</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in coberturas %}
+        <tr>
+          <td><input type="checkbox" name="chk_{{ loop.index }}" value="{{ loop.index }}" onchange="toggleRow(this, {{ loop.index }})"></td>
+          <td><span class="tag tag-{{ c.seg }}">{{ c.seg | upper }}</span></td>
+          <td>{{ c.nome }}</td>
+          <td>
+            <input type="range"
+              id="slider_{{ loop.index }}"
+              min="{{ c.valor_min }}"
+              max="{{ c.valor_max }}"
+              step="{{ c.step }}"
+              value="{{ c.valor_min }}"
+              disabled
+              oninput="document.getElementById('val_{{ loop.index }}').textContent = 'R$ ' + parseInt(this.value).toLocaleString('pt-BR')">
+            <div id="val_{{ loop.index }}" style="font-size:.8rem; color:#666; margin-top:2px">R$ {{ '{:,}'.format(c.valor_min).replace(',', '.') }}</div>
+            <input type="hidden" id="hid_{{ loop.index }}" name="hid_{{ loop.index }}" value="">
+          </td>
+          <td style="font-size:.82rem; color:#666">R$ {{ '{:,}'.format(c.valor_min).replace(',', '.') }}</td>
+          <td style="font-size:.82rem; color:#666">R$ {{ '{:,}'.format(c.valor_max).replace(',', '.') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% set ns = namespace(coberturas_json='[') %}
+  {% for c in coberturas %}
+    {% set entry = '{"idx":' ~ loop.index ~ ',"seguradora":"' ~ c.seg ~ '","session_id":"' ~ c.session_id ~ '","nome":"' ~ c.nome ~ '","valor_min":' ~ c.valor_min ~ '}' %}
+    {% if loop.first %}
+      {% set ns.coberturas_json = ns.coberturas_json ~ entry %}
+    {% else %}
+      {% set ns.coberturas_json = ns.coberturas_json ~ ',' ~ entry %}
+    {% endif %}
+  {% endfor %}
+  {% set ns.coberturas_json = ns.coberturas_json ~ ']' %}
+
+  <input type="hidden" name="selecoes" id="selecoes_input" value="">
+
+  <div style="margin-bottom:24px">
+    <button type="submit" class="btn btn-primary" onclick="return prepararSelecoes()">Gerar Cotações Selecionadas</button>
+    <span style="margin-left:16px; color:#666; font-size:.9rem" id="resumo"></span>
+  </div>
+</form>
+
+<script>
+var COBERTURAS = {{ ns.coberturas_json }};
+
+function toggleRow(chk, idx) {
+  var slider = document.getElementById('slider_' + idx);
+  slider.disabled = !chk.checked;
+  atualizarResumo();
+}
+
+function atualizarResumo() {
+  var n = document.querySelectorAll('input[type=checkbox]:checked').length;
+  document.getElementById('resumo').textContent = n > 0 ? n + ' cobertura(s) selecionada(s)' : '';
+}
+
+function prepararSelecoes() {
+  var selecionadas = [];
+  COBERTURAS.forEach(function(c) {
+    var chk = document.querySelector('input[name="chk_' + c.idx + '"]');
+    if (chk && chk.checked) {
+      var slider = document.getElementById('slider_' + c.idx);
+      selecionadas.push({
+        seguradora: c.seguradora,
+        session_id: c.session_id,
+        nome: c.nome,
+        valor: parseInt(slider.value)
+      });
+    }
+  });
+  if (selecionadas.length === 0) {
+    alert('Selecione ao menos uma cobertura.');
+    return false;
+  }
+  document.getElementById('selecoes_input').value = JSON.stringify(selecionadas);
+  return true;
+}
+</script>
+
+{% else %}
+<div class="card">
+  <p style="color:#666">Nenhuma cobertura disponível. Tente novamente.</p>
+  <a href="/" class="btn btn-secondary" style="margin-top:16px">Voltar</a>
+</div>
+{% endif %}
+
+{% endblock %}
