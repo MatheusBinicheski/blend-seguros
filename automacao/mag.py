@@ -495,10 +495,19 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
             await combo.scroll_into_view_if_needed(timeout=5_000)
         except Exception:
             pass
-        await combo.click(force=True)
-        await page.wait_for_timeout(300)
-        await combo.fill("")
-        await page.wait_for_timeout(2000)
+        # React Select v2 precisa de mousedown no Control (3 níveis acima do input)
+        opened = False
+        for xpath in ('xpath=../../..', 'xpath=../../../..', 'xpath=../..'):
+            try:
+                ctrl = combo.locator(xpath)
+                await ctrl.click(timeout=2_000)
+                opened = True
+                break
+            except Exception:
+                continue
+        if not opened:
+            await combo.click(force=True)
+        await page.wait_for_timeout(2500)
         await page.screenshot(path="/tmp/mag_combo_aberto.png")
 
         # Dropdown de produto = grade customizada (sem role="option").
@@ -545,6 +554,8 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
             ))
 
         print(f"[mag] {len(coberturas)} coberturas encontradas", flush=True)
+        if not coberturas:
+            raise Exception(f"MAG 0 coberturas — all_opts={all_opts[:3]!r}")
         _SESSOES[session_id] = {
             "pw": pw, "browser": browser, "ctx": ctx,
             "page": page, "dados": dados,

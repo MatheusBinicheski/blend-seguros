@@ -74,10 +74,12 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
             await cont.click(force=True)
         await page.wait_for_timeout(2000)
 
-        for _ in range(10):
+        for _ in range(15):
             if "dados-pessoais" not in page.url:
                 break
             await page.wait_for_timeout(1000)
+        else:
+            raise Exception(f"AZOS bloqueado em dados-pessoais (15s) — form inválido? url={page.url}")
         print(f"[azos] pós-continuar → {page.url}", flush=True)
 
         await page.wait_for_load_state("domcontentloaded", timeout=20_000)
@@ -98,6 +100,8 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
         coberturas = await _extrair_coberturas(page)
         print(f"[azos] {len(coberturas)} coberturas extraídas | url={page.url}", flush=True)
+        if not coberturas:
+            raise Exception(f"AZOS 0 coberturas extraídas — url={page.url}")
 
         _SESSOES[session_id] = {
             "pw": pw, "browser": browser, "ctx": ctx, "page": page,
