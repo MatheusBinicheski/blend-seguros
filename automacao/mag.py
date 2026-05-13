@@ -502,28 +502,47 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
                 return document.querySelectorAll('[role="option"]').length > 0;
             }""")
 
-        # Tentativa 1: click no input + fill('')
-        await combo.click(force=True)
-        await page.wait_for_timeout(800)
-        await combo.fill("")
-        await page.wait_for_timeout(3000)
+        # Tentativa 1: dispatchEvent mousedown direto (React Select escuta mousedown, não click)
+        try:
+            await combo.evaluate("""(el) => {
+                el.focus();
+                el.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, button:0}));
+                el.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, button:0}));
+                el.dispatchEvent(new MouseEvent('click', {bubbles:true, cancelable:true, button:0}));
+            }""")
+            await page.wait_for_timeout(2_500)
+        except Exception:
+            pass
 
-        # Tentativa 2: se menu não abriu, tenta click no Control (3 níveis acima)
+        # Tentativa 2: click no input + fill('')
         if not await _menu_aberto():
-            print("[mag] menu não abriu via click+fill, tentando XPath Control", flush=True)
-            for xpath in ('xpath=../../..', 'xpath=../../../..', 'xpath=../..', 'xpath=..'):
-                try:
-                    ctrl = combo.locator(xpath)
-                    await ctrl.click(timeout=2_000, force=True)
-                    await page.wait_for_timeout(2_500)
-                    if await _menu_aberto():
-                        break
-                except Exception:
-                    continue
+            print("[mag] menu não abriu via mousedown direto, tentando click+fill", flush=True)
+            try:
+                await combo.click(force=True)
+                await page.wait_for_timeout(500)
+                await combo.fill("")
+                await page.wait_for_timeout(2500)
+            except Exception:
+                pass
 
-        # Tentativa 3: keyboard ArrowDown para forçar abertura
+        # Tentativa 3: mousedown no Control parent via JS (3 níveis acima)
         if not await _menu_aberto():
-            print("[mag] menu ainda fechado, tentando keyboard ArrowDown", flush=True)
+            print("[mag] tentando mousedown no Control parent via JS", flush=True)
+            try:
+                await combo.evaluate("""(el) => {
+                    let ctrl = el.parentElement?.parentElement?.parentElement;
+                    if (ctrl) {
+                        ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, cancelable:true, button:0}));
+                        ctrl.dispatchEvent(new MouseEvent('mouseup', {bubbles:true, cancelable:true, button:0}));
+                    }
+                }""")
+                await page.wait_for_timeout(2_500)
+            except Exception:
+                pass
+
+        # Tentativa 4: keyboard ArrowDown como último recurso
+        if not await _menu_aberto():
+            print("[mag] tentando keyboard ArrowDown", flush=True)
             try:
                 await combo.focus()
                 await page.keyboard.press("ArrowDown")
@@ -580,14 +599,25 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         if not coberturas:
             # Diagnóstico: estado da página quando dropdown não retornou produtos
             diag = await page.evaluate("""() => {
-                const menu = document.querySelector('.q-menu, [role="listbox"]');
+                const menu = document.querySelector('.q-menu, [role="listbox"], [class*="menu"], [class*="dropdown"]');
                 const inputs = document.querySelectorAll('input[aria-autocomplete="list"]').length;
                 const opts = document.querySelectorAll('[role="option"]').length;
                 const errs = [...document.querySelectorAll('.error, [role="alert"], .q-notification')]
                     .map(e => e.innerText.trim().substring(0,60)).filter(Boolean);
-                return {menu: !!menu, inputs, opts, errs: errs.slice(0,2), url: location.href};
+                // Captura todos os textos com padrão "(NNN)" — produtos podem estar em qualquer formato
+                const cands = [];
+                const seen = new Set();
+                for (const el of document.querySelectorAll('div, li, span, button, a')) {
+                    const txt = (el.innerText || '').trim();
+                    if (txt && /\\(\\d{2,5}\\)/.test(txt) && txt.length < 150 && !seen.has(txt)) {
+                        seen.add(txt);
+                        cands.push(txt.substring(0, 60));
+                        if (cands.length >= 3) break;
+                    }
+                }
+                return {menu: !!menu, inputs, opts, errs: errs.slice(0,2), cands, url: location.href};
             }""")
-            raise Exception(f"MAG 0 coberturas — opts_total={diag.get('opts')}, inputs={diag.get('inputs')}, menu_aberto={diag.get('menu')}, errs={diag.get('errs')}, url={diag.get('url', '')[:80]}")
+            raise Exception(f"MAG 0 coberturas — opts={diag.get('opts')}, inputs={diag.get('inputs')}, menu={diag.get('menu')}, cands={diag.get('cands')}, errs={diag.get('errs')}, url={diag.get('url', '')[:60]}")
         _SESSOES[session_id] = {
             "pw": pw, "browser": browser, "ctx": ctx,
             "page": page, "dados": dados,
