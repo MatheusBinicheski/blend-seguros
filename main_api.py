@@ -56,6 +56,27 @@ async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
 
+@app.get("/debug/screenshot/{nome}")
+async def debug_screenshot(nome: str):
+    """Serve screenshots de debug salvas em /tmp/{nome}.png pelos módulos das seguradoras."""
+    from fastapi.responses import FileResponse, PlainTextResponse
+    path = f"/tmp/{nome}.png"
+    if not os.path.exists(path):
+        return PlainTextResponse(f"não existe: {path}", status_code=404)
+    return FileResponse(path, media_type="image/png")
+
+
+@app.get("/debug/dump/{nome}")
+async def debug_dump(nome: str):
+    """Serve HTML/JSON dumps de /tmp/{nome}.html|.json para depuração."""
+    from fastapi.responses import FileResponse, PlainTextResponse
+    for ext in (".html", ".json", ".txt"):
+        path = f"/tmp/{nome}{ext}"
+        if os.path.exists(path):
+            return FileResponse(path)
+    return PlainTextResponse(f"não existe: /tmp/{nome}.html|.json|.txt", status_code=404)
+
+
 @app.post("/cotar")
 async def cotar(
     background_tasks: BackgroundTasks,

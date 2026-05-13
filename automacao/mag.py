@@ -543,7 +543,14 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
         all_opts = sorted(coletados)
         print(f"[mag] all_opts total ({len(all_opts)})", flush=True)
-        await page.screenshot(path="/tmp/mag_combo_aberto.png")
+        await page.screenshot(path="/tmp/mag_combo_aberto.png", full_page=True)
+        # Dump completo do HTML pra diagnóstico
+        try:
+            html = await page.content()
+            with open("/tmp/mag_combo_aberto.html", "w") as f:
+                f.write(html)
+        except Exception:
+            pass
         try:
             await combo.fill("")
         except Exception:
