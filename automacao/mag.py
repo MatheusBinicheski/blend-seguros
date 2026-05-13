@@ -495,9 +495,9 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         except Exception:
             pass
         await combo.click(force=True)
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(800)
         await combo.fill("")
-        await page.wait_for_timeout(3000)
+        await page.wait_for_timeout(6000)
         await page.screenshot(path="/tmp/mag_combo_aberto.png")
 
         # Dropdown de produto = grade customizada (sem role="option").
@@ -545,7 +545,16 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
         print(f"[mag] {len(coberturas)} coberturas encontradas", flush=True)
         if not coberturas:
-            raise Exception(f"MAG 0 coberturas — all_opts={all_opts[:3]!r}")
+            # Diagnóstico: estado da página quando dropdown não retornou produtos
+            diag = await page.evaluate("""() => {
+                const menu = document.querySelector('.q-menu, [role="listbox"]');
+                const inputs = document.querySelectorAll('input[aria-autocomplete="list"]').length;
+                const opts = document.querySelectorAll('[role="option"]').length;
+                const errs = [...document.querySelectorAll('.error, [role="alert"], .q-notification')]
+                    .map(e => e.innerText.trim().substring(0,60)).filter(Boolean);
+                return {menu: !!menu, inputs, opts, errs: errs.slice(0,2), url: location.href};
+            }""")
+            raise Exception(f"MAG 0 coberturas — opts_total={diag.get('opts')}, inputs={diag.get('inputs')}, menu_aberto={diag.get('menu')}, errs={diag.get('errs')}, url={diag.get('url', '')[:80]}")
         _SESSOES[session_id] = {
             "pw": pw, "browser": browser, "ctx": ctx,
             "page": page, "dados": dados,
