@@ -17,6 +17,21 @@ JOBS: dict[str, dict] = {}
 JOB_TTL = 1800
 
 
+def _cpf_valido(cpf: str) -> bool:
+    """Valida CPF brasileiro (11 dígitos + checksum)."""
+    digitos = "".join(c for c in cpf if c.isdigit())
+    if len(digitos) != 11 or digitos == digitos[0] * 11:
+        return False
+    for i in (9, 10):
+        soma = sum(int(digitos[j]) * (i + 1 - j) for j in range(i))
+        d = (soma * 10) % 11
+        if d == 10:
+            d = 0
+        if d != int(digitos[i]):
+            return False
+    return True
+
+
 def _novo_job() -> tuple[str, dict]:
     jid = str(uuid.uuid4())
     job = {
@@ -79,6 +94,7 @@ async def debug_dump(nome: str):
 
 @app.post("/cotar")
 async def cotar(
+    request: Request,
     background_tasks: BackgroundTasks,
     nome:      str = Form(...),
     nascimento: str = Form(...),
@@ -90,6 +106,11 @@ async def cotar(
     profissao: str = Form("Advogado"),
     ocupacao:  str = Form("Profissional Liberal"),
 ):
+    if not _cpf_valido(cpf):
+        return templates.TemplateResponse("erro.html", {
+            "request": request,
+            "msg": f"CPF '{cpf}' é inválido. MAG Seguros valida CPF antes de gerar cotação — use um CPF válido.",
+        })
     _limpar_jobs_antigos()
     jid, job = _novo_job()
     dados = dict(

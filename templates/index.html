@@ -4,7 +4,7 @@
 <h1>Blend Seguros — Nova Cotação</h1>
 <div class="card">
   <h2>Dados do Cliente</h2>
-  <form method="post" action="/cotar">
+  <form method="post" action="/cotar" onsubmit="return validarForm(this)">
     <div class="grid-2" style="margin-bottom:16px">
       <div>
         <label for="nome">Nome completo</label>
@@ -61,4 +61,28 @@
     <button type="submit" class="btn btn-primary">Cotar nas 3 seguradoras</button>
   </form>
 </div>
+<script>
+function cpfValido(cpf) {
+  var d = cpf.replace(/\D/g, '');
+  if (d.length !== 11) return false;
+  if (/^(\d)\1+$/.test(d)) return false;
+  for (var i = 9; i <= 10; i++) {
+    var soma = 0;
+    for (var j = 0; j < i; j++) soma += parseInt(d[j]) * (i + 1 - j);
+    var r = (soma * 10) % 11;
+    if (r === 10) r = 0;
+    if (r !== parseInt(d[i])) return false;
+  }
+  return true;
+}
+function validarForm(form) {
+  var cpf = form.cpf.value.trim();
+  if (cpf && !cpfValido(cpf)) {
+    alert('CPF inválido. O MAG Seguros valida o CPF — use um CPF válido para gerar cotações.');
+    form.cpf.focus();
+    return false;
+  }
+  return true;
+}
+</script>
 {% endblock %}
