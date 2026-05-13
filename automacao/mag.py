@@ -522,19 +522,27 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await page.keyboard.press("Escape")
         await page.wait_for_timeout(500)
 
+        # Remove produtos não relacionados a seguro de vida/acidentes
+        _EXCLUIR = {"pgbl", "vgbl", "assist", "residencial", "auto ", "pet", "saf "}
+
         coberturas = []
         for opt in all_opts:
             mt = re.match(r'^(.+?)\s*\((\d+)\)\s*$', opt.strip())
-            if mt:
-                coberturas.append(Cobertura(
-                    id=f"mag_{mt.group(2)}",
-                    nome=mt.group(1).strip(),
-                    descricao="",
-                    valor_min=1_000.0,
-                    valor_max=3_000_000.0,
-                    premio_referencia=0.0,
-                    seguradora="mag",
-                ))
+            if not mt:
+                continue
+            nome_prod = mt.group(1).strip()
+            nome_lower = nome_prod.lower()
+            if any(exc in nome_lower for exc in _EXCLUIR):
+                continue
+            coberturas.append(Cobertura(
+                id=f"mag_{mt.group(2)}",
+                nome=nome_prod,
+                descricao="",
+                valor_min=10_000.0,
+                valor_max=3_000_000.0,
+                premio_referencia=0.0,
+                seguradora="mag",
+            ))
 
         print(f"[mag] {len(coberturas)} coberturas encontradas", flush=True)
         _SESSOES[session_id] = {

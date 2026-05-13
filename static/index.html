@@ -227,7 +227,7 @@
             <th>Seguradora</th>
             <th>Capital mín.</th>
             <th>Capital máx.</th>
-            <th>Prêmio ref.</th>
+            <th>Prêmio</th>
             <th style="width:140px">Capital desejado</th>
           </tr>
         </thead>
@@ -246,8 +246,8 @@
           <div class="label">seguradoras</div>
         </div>
         <div class="resumo-item">
-          <div class="num" id="res-premio">R$ 0</div>
-          <div class="label">prêmio ref./mês</div>
+          <div class="num" id="res-capital">R$ 0</div>
+          <div class="label">capital total</div>
         </div>
       </div>
       <button class="btn btn-success btn-lg" id="btn-finalizar" onclick="finalizarBlend()">
@@ -336,17 +336,18 @@ async function carregarCoberturas() {
       tr.dataset.nome = cob.nome;
       tr.dataset.valorMin = cob.valor_min;
       tr.dataset.premioRef = cob.premio_referencia || 0;
+      const step = cob.valor_min >= 10000 ? 10000 : 1000;
       tr.innerHTML = `
         <td><input type="checkbox" class="check-select" onchange="atualizarResumo()"/></td>
         <td><strong>${cob.nome}</strong></td>
         <td><span class="badge badge-${seg}">${seg.toUpperCase()}</span></td>
         <td>${fmt(cob.valor_min)}</td>
         <td>${fmt(cob.valor_max)}</td>
-        <td>${cob.premio_referencia ? 'R$ ' + cob.premio_referencia.toFixed(2) + '/mês' : '—'}</td>
+        <td style="color:#94a3b8;font-size:.75rem">calculado na cotação</td>
         <td>
           <input type="number" class="valor-input capital-input"
             value="${Math.round(cob.valor_min)}"
-            min="${cob.valor_min}" max="${cob.valor_max}" step="10000"
+            min="${cob.valor_min}" max="${cob.valor_max}" step="${step}"
             onchange="atualizarResumo()"/>
         </td>`;
       tbody.appendChild(tr);
@@ -363,13 +364,13 @@ function atualizarResumo() {
   const linhas = [...document.querySelectorAll('#tbody-coberturas tr')];
   const selecionadas = linhas.filter(tr => tr.querySelector('.check-select').checked);
   const segs = new Set(selecionadas.map(tr => tr.dataset.seg));
-  const premioTotal = selecionadas.reduce((s, tr) => {
-    return s + parseFloat(tr.dataset.premioRef || 0);
+  const capitalTotal = selecionadas.reduce((s, tr) => {
+    return s + parseFloat(tr.querySelector('.capital-input').value || 0);
   }, 0);
 
   document.getElementById('res-count').textContent = selecionadas.length;
   document.getElementById('res-segs').textContent  = segs.size;
-  document.getElementById('res-premio').textContent = 'R$ ' + premioTotal.toFixed(2);
+  document.getElementById('res-capital').textContent = fmt(capitalTotal);
 }
 
 // ── Finalizar blend ────────────────────────────────────────────────────────────

@@ -251,6 +251,21 @@ async def _extrair_coberturas(page: Page) -> list[Cobertura]:
             const result = [];
             const seen = new Set();
 
+            function lerMinMax(container) {
+                // Tenta ler min/max do input de capital dentro do card da cobertura
+                const inp = container.querySelector(
+                    'input[type="tel"], input[type="number"], input[name*="capital"], input[name*="valor"]'
+                );
+                let vMin = 50000, vMax = 5000000;
+                if (inp) {
+                    const minA = parseFloat(inp.getAttribute('min') || '0');
+                    const maxA = parseFloat(inp.getAttribute('max') || '0');
+                    if (minA > 0) vMin = minA;
+                    if (maxA > 0) vMax = maxA;
+                }
+                return { vMin, vMax };
+            }
+
             // Novo UI 2025: toggle buttons min-w-11 min-h-11 data-slot="tooltip-trigger"
             const toggles = document.querySelectorAll(
                 'button.min-w-11.min-h-11[data-slot="tooltip-trigger"]'
@@ -270,12 +285,13 @@ async def _extrair_coberturas(page: Page) -> list[Cobertura]:
                         const descEl = container.querySelector('p');
                         const cls = btn.className || '';
                         const ativo = cls.includes('bg-primary') && !cls.includes('bg-black');
+                        const { vMin, vMax } = lerMinMax(container);
                         result.push({
                             nome: nome.substring(0, 80),
                             descricao: descEl ? descEl.innerText.trim().substring(0, 150) : '',
                             ativo,
-                            valor_max: 5000000,
-                            valor_min: 50000,
+                            valor_min: vMin,
+                            valor_max: vMax,
                         });
                         break;
                     }
@@ -294,12 +310,13 @@ async def _extrair_coberturas(page: Page) -> list[Cobertura]:
                     seen.add(nome);
                     const container = header.parentElement;
                     const descEl = container ? container.querySelector('p') : null;
+                    const { vMin, vMax } = lerMinMax(container || header);
                     result.push({
                         nome: nome.substring(0, 80),
                         descricao: descEl ? descEl.innerText.trim().substring(0, 150) : '',
                         ativo: sw.getAttribute('aria-checked') === 'true',
-                        valor_max: 500000,
-                        valor_min: 10000,
+                        valor_min: vMin,
+                        valor_max: vMax,
                     });
                 });
             }
