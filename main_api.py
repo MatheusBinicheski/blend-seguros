@@ -79,12 +79,15 @@ async def cotar(
     telefone:   str = Form(""),
     renda:      str = Form("5000"),
     sexo:       str = Form("M"),
+    profissao:  str = Form("Advogado"),
+    ocupacao:   str = Form("Profissional Liberal"),
 ):
     _limpar_jobs_antigos()
     jid, job = _novo_job()
     dados = dict(
         nome=nome, nascimento=nascimento, cpf=cpf,
-        email=email, telefone=telefone, renda_mensal=renda, sexo=sexo,
+        email=email, telefone=telefone, renda_mensal=renda,
+        sexo=sexo, profissao=profissao, ocupacao=ocupacao,
     )
     background_tasks.add_task(_executar_fase1, jid, dados)
     return {"job_id": jid}

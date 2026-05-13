@@ -14,7 +14,7 @@ _SESSOES: dict[str, dict] = {}
 
 
 async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> ResultadoFase1:
-    pw, browser, ctx, page = await novo_browser(headless=False)
+    pw, browser, ctx, page = await novo_browser(headless=headless)
     session_id = "omint-" + str(id(page))
     try:
         print(f"[omint] iniciando fase1", flush=True)

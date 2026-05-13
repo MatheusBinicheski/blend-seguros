@@ -147,20 +147,29 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
         pass
 
     # Profissão — Radix UI cmdk: trigger + busca + clique na opção
+    profissao_busca = d.get("profissao", "Advogado")
     try:
         prof_btn = page.locator('button[name="professionId"]').first
         if await prof_btn.count() and await prof_btn.is_visible():
             await prof_btn.click(force=True)
-            await page.wait_for_timeout(600)
+            # Aguarda o dialog/cmdk abrir (headless pode ser mais lento)
+            try:
+                await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=5_000)
+            except Exception:
+                pass
             prof_inp = page.locator('input[cmdk-input]').first
             if await prof_inp.count():
-                await prof_inp.fill("Analista")
-                await page.wait_for_timeout(1000)
+                await prof_inp.fill(profissao_busca)
+                await page.wait_for_timeout(800)
                 opt = page.locator('[cmdk-item][role="option"]').first
                 if await opt.count():
                     await opt.click()
+                    await page.wait_for_timeout(400)
                 else:
-                    await page.keyboard.press("Escape")
+                    # Fallback: ArrowDown + Enter seleciona a primeira opção disponível
+                    await page.keyboard.press("ArrowDown")
+                    await page.wait_for_timeout(200)
+                    await page.keyboard.press("Enter")
             else:
                 await page.keyboard.press("Escape")
     except Exception:
@@ -176,8 +185,8 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
     try:
         renda_inp = page.locator('input[name="monthlyIncome"]').first
         if await renda_inp.count() and await renda_inp.is_visible():
-            await renda_inp.click()
-            await renda_inp.press_sequentially(str(renda_int), delay=50)
+            await renda_inp.click(click_count=3)
+            await renda_inp.fill(str(renda_int))
             await page.keyboard.press("Tab")
             await page.wait_for_timeout(200)
     except Exception:
