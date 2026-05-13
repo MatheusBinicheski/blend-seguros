@@ -32,13 +32,18 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         await page.fill('input[name="password"]', SENHA)
         await resolver_captcha(page)
         await page.click('button[type="submit"]')
-        # Aguarda saída da página de login (domcontentloaded evita timeout por recursos lentos)
-        for _ in range(60):
+        # Aguarda navegar para fora da página de login E para dentro do domínio contratacao/corretores
+        for _ in range(90):
             await page.wait_for_timeout(1000)
-            if "login" not in page.url:
+            url = page.url
+            # Sucesso: chegou em dashboard, simulacao ou qualquer rota autenticada
+            if any(k in url for k in ("dashboard", "simulacao", "cotacao", "proposta", "contratacao.azos")):
                 break
+            # Falha explícita: voltou para login com erro
+            if "login" in url and _ > 5:
+                raise Exception(f"Login AZOS rejeitado — URL: {url}")
         else:
-            raise Exception(f"Login AZOS falhou — ainda em: {page.url}")
+            raise Exception(f"Login AZOS timeout (90s) — URL: {page.url}")
         print(f"[azos] login ok → {page.url}", flush=True)
 
         # Navegação para simulação

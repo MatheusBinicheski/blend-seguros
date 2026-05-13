@@ -204,16 +204,23 @@ async def _executar_fase1(job_id: str, dados: dict):
 
     async def coletar(seg: str):
         mod = MODULOS[seg]
-        job["msg"] = f"[{seg}] coletando coberturas..."
-        try:
-            result = await mod.fase1_coletar_coberturas(dados, headless=True)
-            job["fase1"][seg] = result
-            status = "ok" if result.ok else f"erro: {result.erro}"
-            print(f"[blend] fase1 {seg} → {status}", flush=True)
-        except Exception as e:
-            from models import ResultadoFase1
-            job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro=str(e))
-            print(f"[blend] fase1 {seg} EXCEÇÃO: {e}", flush=True)
+        for tentativa in range(3):
+            job["msg"] = f"[{seg}] coletando coberturas{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
+            try:
+                result = await mod.fase1_coletar_coberturas(dados, headless=True)
+                if result.ok:
+                    job["fase1"][seg] = result
+                    print(f"[blend] fase1 {seg} → ok (tentativa {tentativa+1})", flush=True)
+                    return
+                print(f"[blend] fase1 {seg} tentativa {tentativa+1} falhou: {result.erro}", flush=True)
+            except Exception as e:
+                print(f"[blend] fase1 {seg} tentativa {tentativa+1} EXCEÇÃO: {e}", flush=True)
+            if tentativa < 2:
+                await asyncio.sleep(3)
+        # Todas tentativas falharam
+        from models import ResultadoFase1
+        job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro=f"Falhou após 3 tentativas")
+        print(f"[blend] fase1 {seg} → esgotado", flush=True)
 
     # Executa todas em paralelo
     await asyncio.gather(*[coletar(seg) for seg in MODULOS])
