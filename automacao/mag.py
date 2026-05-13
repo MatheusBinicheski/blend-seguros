@@ -301,11 +301,30 @@ async def _preencher_dados(page: Page, dados: dict):
     await page.wait_for_timeout(600)
     works_inp = page.locator('#quoter_form__your-data__works_as__input')
     if await works_inp.is_visible():
-        profissao = dados.get("profissao", "") or "Advogado"
+        profissao = (dados.get("profissao", "") or "Advogado").strip()
+        # MAG só tem profissões no masculino — converte feminino → masculino
+        if profissao.lower().endswith("a") and not profissao.lower().endswith(("ia", "ta")):
+            profissao_masc = profissao[:-1] + "o"
+        else:
+            profissao_masc = profissao
         await _escolher_react_select(
             page, "quoter_form__your-data__works_as__input",
-            profissao
+            profissao_masc
         )
+        # Verifica se foi selecionado — caso contrário, fallback para "Advogado"
+        await page.wait_for_timeout(500)
+        works_value = await page.evaluate("""() => {
+            const el = document.querySelector('#quoter_form__your-data__works_as');
+            if (!el) return '';
+            const span = el.querySelector('.css-1uccc91-singleValue, [class*="singleValue"]');
+            return span ? span.innerText.trim() : '';
+        }""")
+        if not works_value:
+            print(f"[mag] profissão '{profissao_masc}' não foi selecionada, tentando 'Advogado'", flush=True)
+            await _escolher_react_select(
+                page, "quoter_form__your-data__works_as__input",
+                "Advogado"
+            )
 
     renda_raw = re.sub(r'\D', '', str(dados.get("renda_mensal", "5000")))
     renda_inp = page.locator('#quoter_form__your-data__currency')
