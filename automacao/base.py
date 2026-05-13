@@ -6,12 +6,15 @@ from playwright.async_api import async_playwright, Browser, BrowserContext, Page
 _CAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY", "")
 
 
-async def novo_browser(headless: bool = True) -> tuple[object, Browser, BrowserContext, Page]:
+async def novo_browser(headless: bool = True, extra_args: list[str] | None = None) -> tuple[object, Browser, BrowserContext, Page]:
     """Abre Chromium e retorna (playwright, browser, context, page)."""
     pw = await async_playwright().start()
+    args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"]
+    if extra_args:
+        args.extend(extra_args)
     browser = await pw.chromium.launch(
         headless=headless,
-        args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+        args=args,
     )
     ctx = await browser.new_context(
         viewport={"width": 1280, "height": 900},

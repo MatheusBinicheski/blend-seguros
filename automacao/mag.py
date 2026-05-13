@@ -301,8 +301,7 @@ async def _editar_solucao(page: Page) -> bool:
     if not await btn.count():
         return False
     await btn.click()
-    # Headless pode ser mais lento para carregar a seção de produtos
-    await page.wait_for_timeout(10_000)
+    await page.wait_for_timeout(20_000)
     return True
 
 
@@ -466,12 +465,12 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
                     const inputs = document.querySelectorAll('input[aria-autocomplete="list"]');
                     return [...inputs].some(inp => !inp.id.includes('your-data'));
                 }""",
-                timeout=25_000,
+                timeout=40_000,
             )
         except Exception:
             # Segunda tentativa: aguarda mais e tenta rolar a página para carregar
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(5_000)
+            await page.wait_for_timeout(10_000)
             n = await page.evaluate(
                 "() => [...document.querySelectorAll('input[aria-autocomplete=\"list\"]')].filter(i => !i.id.includes('your-data')).length"
             )

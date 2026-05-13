@@ -16,12 +16,12 @@ _SESSOES: dict[str, dict] = {}
 async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> ResultadoFase1:
     # OMINT usa Quasar SPA que não renderiza corretamente em headless=True no Railway.
     # Railway tem display virtual (Xvfb) que suporta headless=False.
-    pw, browser, ctx, page = await novo_browser(headless=False)
+    pw, browser, ctx, page = await novo_browser(headless=False, extra_args=["--disable-gpu", "--disable-extensions"])
     session_id = "omint-" + str(id(page))
     try:
         print(f"[omint] iniciando fase1", flush=True)
-        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
-        await page.wait_for_timeout(8000)  # Quasar SPA demora a renderizar em headless=True
+        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60_000)
+        await page.wait_for_timeout(10_000)  # Quasar SPA demora a renderizar
 
         await _login(page)
         print(f"[omint] login ok → {page.url}", flush=True)
@@ -41,7 +41,7 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _login(page: Page):
-    await page.wait_for_selector('input[type="text"]', timeout=60_000)
+    await page.wait_for_selector('input[type="text"]', timeout=90_000)
     # Preenche usuário e faz Tab para disparo blur/Vue reactivity
     await page.locator('input[type="text"]').first.click()
     await page.locator('input[type="text"]').first.fill(USUARIO)
@@ -53,13 +53,13 @@ async def _login(page: Page):
     await page.wait_for_timeout(300)
     await page.keyboard.press("Enter")
 
-    # Aguarda sair da página de login — polling até 15s (headless pode ser mais lento)
-    for _ in range(30):
+    # Aguarda sair da página de login — polling até 30s
+    for _ in range(60):
         await page.wait_for_timeout(500)
         if "login" not in page.url:
             break
     else:
-        raise Exception("Login OMINT falhou — verifique credenciais")
+        raise Exception(f"Login OMINT timeout 30s — url={page.url}")
 
     # Tutorial onboarding — botão "Avançar" bloqueado por overlay, force=True bypassa
     for _ in range(8):
@@ -72,8 +72,8 @@ async def _login(page: Page):
 
 
 async def _navegar_simulacao(page: Page, dados: dict):
-    await page.goto(URL_COTACAO, wait_until="domcontentloaded", timeout=30_000)
-    await page.wait_for_selector('input.q-field__native', timeout=10_000)
+    await page.goto(URL_COTACAO, wait_until="domcontentloaded", timeout=45_000)
+    await page.wait_for_selector('input.q-field__native', timeout=30_000)
     await page.wait_for_timeout(2000)
 
     # Descarta modais de tutorial se aparecerem
