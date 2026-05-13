@@ -194,21 +194,27 @@ async def _executar_fase1(job_id: str, dados: dict):
     job["status"] = "coletando"
     job["msg"] = "Conectando às seguradoras..."
 
+    # Railway tem RAM limitada — rodar 3 Chromium juntos causa OOM.
+    # Sem 2: AZOS+MAG (ambas headless=True) podem rodar paralelas; OMINT (headless=False, mais pesada) aguarda uma terminar.
+    sem = asyncio.Semaphore(2)
+
     async def coletar(seg: str):
         mod = MODULOS[seg]
         for tentativa in range(3):
-            job["msg"] = f"[{seg}] coletando{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
-            try:
-                result = await mod.fase1_coletar_coberturas(dados, headless=True)
-                if result.ok:
-                    job["fase1"][seg] = result
-                    print(f"[blend] {seg} ok (tentativa {tentativa+1})", flush=True)
-                    return
-                print(f"[blend] {seg} tentativa {tentativa+1} falhou: {result.erro}", flush=True)
-            except Exception as e:
-                print(f"[blend] {seg} tentativa {tentativa+1} exceção: {e}", flush=True)
+            async with sem:
+                job["msg"] = f"[{seg}] coletando{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
+                try:
+                    result = await mod.fase1_coletar_coberturas(dados, headless=True)
+                    if result.ok:
+                        job["fase1"][seg] = result
+                        print(f"[blend] {seg} ok (tentativa {tentativa+1})", flush=True)
+                        return
+                    print(f"[blend] {seg} tentativa {tentativa+1} falhou: {result.erro}", flush=True)
+                except Exception as e:
+                    print(f"[blend] {seg} tentativa {tentativa+1} exceção: {e}", flush=True)
             if tentativa < 2:
-                await asyncio.sleep(3)
+                # Espera maior entre tentativas para o GC liberar memória e o browser anterior fechar de vez
+                await asyncio.sleep(8)
         from models import ResultadoFase1
         job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro="Falhou após 3 tentativas")
 
