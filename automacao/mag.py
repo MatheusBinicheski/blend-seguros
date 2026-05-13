@@ -179,10 +179,11 @@ async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: b
 async def _login(page: Page):
     print("[mag] abrindo identidade…", flush=True)
     await page.goto("https://digital.mag.com.br/simulador",
-                    wait_until="domcontentloaded", timeout=45_000)
-    await page.wait_for_timeout(3000)
+                    wait_until="domcontentloaded", timeout=60_000)
+    await page.wait_for_timeout(5000)
 
-    await page.wait_for_selector('#Cpf', timeout=15_000)
+    # Identidade.mag.com.br pode demorar pra renderizar form em Railway lento
+    await page.wait_for_selector('#Cpf', timeout=45_000)
     await page.locator('#Cpf').fill(CNPJ)
     await page.locator('input[type="password"]').first.fill(SENHA)
     await resolver_captcha(page)
