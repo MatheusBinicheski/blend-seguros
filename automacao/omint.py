@@ -19,7 +19,7 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
     try:
         print(f"[omint] iniciando fase1", flush=True)
         await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
-        await page.wait_for_timeout(4000)  # Quasar SPA demora a renderizar no headless
+        await page.wait_for_timeout(8000)  # Quasar SPA demora a renderizar em headless=True
 
         await _login(page)
         print(f"[omint] login ok → {page.url}", flush=True)
@@ -39,7 +39,7 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 
 async def _login(page: Page):
-    await page.wait_for_selector('input[type="text"]', timeout=30_000)
+    await page.wait_for_selector('input[type="text"]', timeout=60_000)
     # Preenche usuário e faz Tab para disparo blur/Vue reactivity
     await page.locator('input[type="text"]').first.click()
     await page.locator('input[type="text"]').first.fill(USUARIO)
