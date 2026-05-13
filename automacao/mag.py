@@ -178,12 +178,35 @@ async def _escolher_react_select(page: Page, inp_id: str, texto: str, teclado: b
 
 async def _login(page: Page):
     print("[mag] abrindo identidade…", flush=True)
-    await page.goto("https://digital.mag.com.br/simulador",
-                    wait_until="domcontentloaded", timeout=60_000)
+    try:
+        await page.goto("https://digital.mag.com.br/simulador",
+                        wait_until="networkidle", timeout=60_000)
+    except Exception as e:
+        print(f"[mag] networkidle falhou ({e}), tentando domcontentloaded", flush=True)
+        await page.goto("https://digital.mag.com.br/simulador",
+                        wait_until="domcontentloaded", timeout=60_000)
     await page.wait_for_timeout(5000)
 
     # Identidade.mag.com.br pode demorar pra renderizar form em Railway lento
-    await page.wait_for_selector('#Cpf', timeout=45_000)
+    try:
+        await page.wait_for_selector('#Cpf', timeout=45_000)
+    except Exception as e:
+        # Salva screenshot/html pra diagnóstico se #Cpf não aparece
+        try:
+            await page.screenshot(path="/tmp/mag_login_fail.png", full_page=True)
+            html = await page.content()
+            with open("/tmp/mag_login_fail.html", "w") as f:
+                f.write(html)
+        except Exception:
+            pass
+        diag = await page.evaluate("""() => ({
+            url: location.href,
+            title: document.title,
+            body_text: (document.body.innerText||'').substring(0, 200),
+            has_form: !!document.querySelector('form'),
+            inputs: document.querySelectorAll('input').length,
+        })""")
+        raise Exception(f"MAG #Cpf não apareceu — url={diag.get('url')}, title={diag.get('title')}, inputs={diag.get('inputs')}, body={diag.get('body_text', '')[:120]}")
     await page.locator('#Cpf').fill(CNPJ)
     await page.locator('input[type="password"]').first.fill(SENHA)
     await resolver_captcha(page)
