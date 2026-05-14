@@ -193,19 +193,46 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
     async def _tentar_selecionar_profissao(termo: str) -> bool:
         prof_btn = page.locator('button[name="professionId"]').first
         if not await prof_btn.count() or not await prof_btn.is_visible():
+            print(f"[azos] prof_btn não encontrado/visível", flush=True)
             return False
         await prof_btn.click(force=True)
+        await page.wait_for_timeout(1500)  # tempo extra pro Radix dialog abrir
         try:
-            await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=8_000)
-        except Exception:
+            await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=10_000)
+        except Exception as e:
+            print(f"[azos] cmdk-input não apareceu: {e}", flush=True)
+            try:
+                await page.screenshot(path="/tmp/azos_cmdk_fail.png", full_page=True)
+            except Exception:
+                pass
             return False
         prof_inp = page.locator('input[cmdk-input]').first
         if not await prof_inp.count():
             return False
-        # type() (não fill) — dispara eventos React/Radix necessários pro filtro do cmdk
         await prof_inp.click()
-        await prof_inp.press_sequentially(termo, delay=60)
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(200)
+        # press_sequentially dispara keydown/keypress/input — cmdk filtra ao input event
+        await prof_inp.press_sequentially(termo, delay=80)
+        await page.wait_for_timeout(1500)
+
+        # Conta quantas opções estão visíveis
+        opt_count = await page.evaluate("""() => {
+            const opts = document.querySelectorAll('[cmdk-item][role="option"], [role="option"], [cmdk-list] [cmdk-item]');
+            return opts.length;
+        }""")
+        print(f"[azos] cmdk opções após digitar '{termo}': {opt_count}", flush=True)
+
+        if opt_count == 0:
+            # Salva screenshot pra debug
+            try:
+                await page.screenshot(path="/tmp/azos_cmdk_fail.png", full_page=True)
+                html = await page.content()
+                with open("/tmp/azos_cmdk_fail.html", "w") as f:
+                    f.write(html)
+            except Exception:
+                pass
+            return False
+
         # Tenta vários seletores de opção
         for sel in [
             '[cmdk-item][role="option"]:not([data-disabled="true"])',
@@ -219,8 +246,10 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
                     await opt.click()
                     await page.wait_for_timeout(500)
                     return True
-                except Exception:
+                except Exception as e:
+                    print(f"[azos] click opt seletor {sel} falhou: {e}", flush=True)
                     continue
+
         # Fallback: ArrowDown + Enter
         await page.keyboard.press("ArrowDown")
         await page.wait_for_timeout(200)
