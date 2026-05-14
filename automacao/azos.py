@@ -187,34 +187,70 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
     except Exception:
         pass
 
-    # Profissão — Radix UI cmdk: trigger + busca + clique na opção
+    # Profissão — Radix UI cmdk: trigger + busca + clique na opção (com retry se falhar)
     profissao_busca = d.get("profissao", "Advogado")
-    try:
+
+    async def _tentar_selecionar_profissao(termo: str) -> bool:
         prof_btn = page.locator('button[name="professionId"]').first
-        if await prof_btn.count() and await prof_btn.is_visible():
-            await prof_btn.click(force=True)
-            # Aguarda o dialog/cmdk abrir (headless pode ser mais lento)
+        if not await prof_btn.count() or not await prof_btn.is_visible():
+            return False
+        await prof_btn.click(force=True)
+        try:
+            await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=8_000)
+        except Exception:
+            return False
+        prof_inp = page.locator('input[cmdk-input]').first
+        if not await prof_inp.count():
+            return False
+        # type() (não fill) — dispara eventos React/Radix necessários pro filtro do cmdk
+        await prof_inp.click()
+        await prof_inp.press_sequentially(termo, delay=60)
+        await page.wait_for_timeout(1200)
+        # Tenta vários seletores de opção
+        for sel in [
+            '[cmdk-item][role="option"]:not([data-disabled="true"])',
+            '[cmdk-item][role="option"]',
+            '[role="option"]',
+            '[cmdk-list] [cmdk-item]',
+        ]:
+            opt = page.locator(sel).first
+            if await opt.count():
+                try:
+                    await opt.click()
+                    await page.wait_for_timeout(500)
+                    return True
+                except Exception:
+                    continue
+        # Fallback: ArrowDown + Enter
+        await page.keyboard.press("ArrowDown")
+        await page.wait_for_timeout(200)
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(400)
+        return True
+
+    try:
+        sucesso = await _tentar_selecionar_profissao(profissao_busca)
+        # Verifica se o botão tem agora o texto de uma profissão (não o placeholder)
+        await page.wait_for_timeout(300)
+        prof_label = await page.evaluate("""() => {
+            const b = document.querySelector('button[name="professionId"]');
+            if (!b) return '';
+            const txt = (b.innerText || '').trim();
+            // Placeholder contém 'Digite' ou 'Profissão exercida'; valor real não
+            if (/digite|profissão exercida atualmente|selecione/i.test(txt) && !txt.split('\\n').some(l => l && !/digite|profissão exercida|selecione/i.test(l) && l.length > 3)) return '';
+            return txt;
+        }""")
+        if not prof_label and profissao_busca.lower() != "advogado":
+            print(f"[azos] profissão '{profissao_busca}' não selecionada, tentando 'Advogado'", flush=True)
+            # Fecha dialog se ainda aberto
             try:
-                await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=5_000)
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(300)
             except Exception:
                 pass
-            prof_inp = page.locator('input[cmdk-input]').first
-            if await prof_inp.count():
-                await prof_inp.fill(profissao_busca)
-                await page.wait_for_timeout(800)
-                opt = page.locator('[cmdk-item][role="option"]').first
-                if await opt.count():
-                    await opt.click()
-                    await page.wait_for_timeout(400)
-                else:
-                    # Fallback: ArrowDown + Enter seleciona a primeira opção disponível
-                    await page.keyboard.press("ArrowDown")
-                    await page.wait_for_timeout(200)
-                    await page.keyboard.press("Enter")
-            else:
-                await page.keyboard.press("Escape")
-    except Exception:
-        pass
+            await _tentar_selecionar_profissao("Advogado")
+    except Exception as e:
+        print(f"[azos] erro selecionando profissão: {e}", flush=True)
     await page.wait_for_timeout(300)
 
     # Renda mensal
