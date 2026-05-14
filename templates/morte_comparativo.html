@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Comparativo Morte — Blend Seguros{% endblock %}
+{% block content %}
+<h1>Morte por Qualquer Causa — Comparativo das Seguradoras</h1>
+
+<div class="card">
+  <h2 style="margin-bottom:8px">{{ linha.nome }}</h2>
+  <p style="color:#666; font-size:.95rem; margin-bottom:12px">{{ linha.descricao }}</p>
+  <div style="background:#f8f8f8; border-left:3px solid #0057ff; padding:10px 14px; font-size:.85rem; margin-bottom:8px">
+    <strong>Critérios aplicados:</strong>
+    <ul style="margin:6px 0 0 18px; padding:0">
+      {% for c in linha.criterios_filtro %}<li>{{ c }}</li>{% endfor %}
+    </ul>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Comparativo</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:90px">Seguradora</th>
+        <th>Produto oficial</th>
+        <th style="width:140px">Preço por R$ 1.000</th>
+        <th style="width:160px">Capital min/máx</th>
+        <th style="width:140px">Idade entrada</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s, cob in linha.coberturas.items() %}
+      <tr>
+        <td><span class="tag tag-{{ s }}">{{ s | upper }}</span></td>
+        <td>
+          <div style="font-weight:600">{{ cob.nome_oficial }}</div>
+          <div style="font-size:.78rem; color:#666; margin-top:2px">{{ cob.descricao_curta }}</div>
+          {% if cob.susep %}<div style="font-size:.7rem; color:#999; margin-top:2px">SUSEP {{ cob.susep }}</div>{% endif %}
+        </td>
+        <td>
+          {% set sond = sondagens.get(s) %}
+          {% if sond and not sond.erro %}
+            <div style="font-weight:700; font-size:1.05rem">R$ {{ '%.2f'|format(sond.preco_por_1000) | replace('.', ',') }}</div>
+            <div style="font-size:.72rem; color:#666">por R$ 1.000 de capital</div>
+            <div style="font-size:.7rem; color:#999; margin-top:2px">â R$ {{ '{:,}'.format(sond.capital_sondado|int).replace(',', '.') }}: R$ {{ '%.2f'|format(sond.premio_mensal) | replace('.', ',') }}/mês</div>
+          {% elif sond and sond.erro %}
+            <div style="color:#c00; font-size:.78rem">erro: {{ sond.erro[:60] }}</div>
+          {% else %}
+            <div style="color:#aaa; font-size:.78rem">— ainda não sondado —</div>
+          {% endif %}
+        </td>
+        <td style="font-size:.82rem">
+          R$ {{ '{:,}'.format(cob.capital_min).replace(',', '.') }} — R$ {{ '{:,}'.format(cob.capital_max).replace(',', '.') }}
+        </td>
+        <td style="font-size:.82rem">
+          {{ cob.idade_min }} a {{ cob.idade_max }} anos
+          {% if cob.idade_saida %}<br><span style="color:#999">saída aos {{ cob.idade_saida }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h2>Limitações específicas por perfil</h2>
+  {% for s, cob in linha.coberturas.items() %}
+  <div style="border-left:4px solid #ddd; padding:10px 14px; margin-bottom:12px">
+    <div style="font-weight:700; margin-bottom:6px"><span class="tag tag-{{ s }}">{{ s | upper }}</span> — {{ cob.nome_oficial }}</div>
+    {% if cob.restricoes_profissao %}
+      <div style="font-size:.85rem; margin-bottom:6px">
+        <strong>Restrições profissionais:</strong>
+        <ul style="margin:4px 0 0 18px; padding:0">
+          {% for r in cob.restricoes_profissao %}<li>{{ r }}</li>{% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if cob.capital_reduzido_para %}
+      <div style="font-size:.85rem; margin-bottom:6px">
+        <strong>Capital reduzido para perfis de alto risco:</strong>
+        <ul style="margin:4px 0 0 18px; padding:0">
+          {% for prof, cap in cob.capital_reduzido_para.items() %}
+          <li>{{ prof | capitalize }}: limitado a R$ {{ '{:,}'.format(cap).replace(',', '.') }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+    {% if cob.observacoes %}
+      <div style="font-size:.82rem; color:#555">{{ cob.observacoes }}</div>
+    {% endif %}
+    <div style="font-size:.75rem; margin-top:6px">
+      <a href="{{ cob.fonte_cg_url }}" target="_blank" style="color:#0057ff">📄 Condições Gerais (PDF oficial)</a>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<a href="/" class="btn btn-secondary">Nova cotação</a>
+<a href="/coberturas/{{ job_id }}" class="btn btn-primary" style="margin-left:8px">Ver todas as coberturas extraídas (modo antigo)</a>
+{% endblock %}

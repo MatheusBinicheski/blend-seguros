@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from automacao import azos, mag, omint
+from linhas_congeneres import LINHAS_ATIVAS, MORTE_QUALQUER_CAUSA, por_id
 
 JOBS: dict[str, dict] = {}
 JOB_TTL = 1800
@@ -166,13 +167,39 @@ async def aguardando(request: Request, job_id: str):
     if not job:
         return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
     if job["status"] == "fase1_ok":
-        return RedirectResponse(f"/coberturas/{job_id}", status_code=303)
+        return RedirectResponse(f"/comparativo/{job_id}", status_code=303)
     if job["status"] == "erro":
         return templates.TemplateResponse("erro.html", {"request": request, "msg": job.get("erro", "Erro desconhecido.")})
     return templates.TemplateResponse("aguardando.html", {
         "request": request,
         "job_id": job_id,
         "msg": job.get("msg", "Processando..."),
+    })
+
+
+@app.get("/comparativo/{job_id}", response_class=HTMLResponse)
+async def comparativo(request: Request, job_id: str):
+    """Nova view: tabela conceitual mostrando linhas congêneres + preço por R$ 1.000."""
+    job = JOBS.get(job_id)
+    if not job:
+        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
+    if job["status"] != "fase1_ok":
+        return RedirectResponse(f"/aguardando/{job_id}", status_code=303)
+
+    sondagens_morte: dict[str, dict] = {}
+    for seg, r in job["fase1"].items():
+        if not r.ok:
+            continue
+        for s in getattr(r, "sondagens", []):
+            if s.linha_id == "morte_qualquer_causa":
+                sondagens_morte[seg] = s
+                break
+
+    return templates.TemplateResponse("morte_comparativo.html", {
+        "request": request,
+        "job_id": job_id,
+        "linha": MORTE_QUALQUER_CAUSA,
+        "sondagens": sondagens_morte,
     })
 
 
