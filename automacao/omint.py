@@ -3,7 +3,7 @@ from __future__ import annotations
 import os, re
 from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, clicar_continuar
-from models import Cobertura, ResultadoFase1, ResultadoCotacao
+from models import Cobertura, ResultadoFase1, ResultadoCotacao, SondagemPreco
 
 URL_LOGIN   = "https://omint.seg.br/athena/#/login"
 URL_COTACAO = "https://omint.seg.br/athena/#/proposta/cotacao/adicionar"
@@ -286,6 +286,94 @@ async def _extrair_coberturas(page: Page) -> list[Cobertura]:
     except Exception as e:
         print(f"[omint] erro ao extrair coberturas: {e}", flush=True)
     return coberturas
+
+
+async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """
+    Sonda prêmio para OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL em capital âncora.
+    Reusa sessão fase1: marca checkbox da cobertura, fill capital, avança e captura preço.
+
+    TODO: configurar comissão 25%/200% — descobrir onde está esse seletor na UI do Athena
+    (provavelmente em /produtos ou tela posterior). Por ora usa comissão padrão.
+    """
+    sessao = _SESSOES.get(session_id)
+    if not sessao:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome="OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro="Sessão expirada",
+        )
+    page: Page = sessao["page"]
+    try:
+        nome_produto = "OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL"
+        # Reusa lógica da fase2: marca checkbox e preenche capital
+        chk = page.locator(f'*:has-text("{nome_produto[:30]}") input[type="checkbox"]').first
+        if await chk.count() and not await chk.is_checked():
+            await chk.click()
+            await page.wait_for_timeout(500)
+
+        inp = page.locator(
+            f'*:has-text("{nome_produto[:30]}") input[type="number"], '
+            f'*:has-text("{nome_produto[:30]}") input[type="tel"]'
+        ).first
+        if await inp.count():
+            try:
+                await inp.wait_for(state="enabled", timeout=3000)
+                await inp.click()
+            except Exception:
+                bbox = await inp.bounding_box()
+                if bbox:
+                    await page.mouse.click(bbox["x"] + bbox["width"] / 2, bbox["y"] + bbox["height"] / 2)
+            await page.keyboard.press("Control+a")
+            await page.keyboard.type(str(int(capital)), delay=25)
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(700)
+
+        # TODO: selecionar comissão 25%/200% — descobrir UI
+        # Por enquanto, avança e captura o preço com comissão padrão
+
+        await clicar_continuar(page)
+        await page.wait_for_timeout(4000)
+
+        # Captura prêmio do texto da página
+        txt = await page.inner_text("body")
+        premio_val: float | None = None
+        # Procura padrões "R$ X,XX"
+        candidatos = []
+        for m in re.finditer(r'R\$\s*([\d.]+),(\d{2})', txt):
+            try:
+                f = float(m.group(1).replace(".", "") + "." + m.group(2))
+                if 5 <= f <= 5000:
+                    candidatos.append(f)
+            except Exception:
+                pass
+        # Heurística: prêmio mensal costuma ser o menor valor razoável
+        if candidatos:
+            premio_val = min(candidatos)
+            print(f"[omint] sondagem Morte: R$ {premio_val:.2f}/mês (de {len(candidatos)} candidatos)", flush=True)
+
+        if premio_val is None or premio_val <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome_produto,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=f"Prêmio não capturado | url={page.url}",
+            )
+
+        preco_1k = round(premio_val / (capital / 1000.0), 4)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa",
+            cobertura_nome=nome_produto,
+            capital_sondado=float(capital),
+            premio_mensal=premio_val,
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa",
+            cobertura_nome="OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
 
 
 async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[ResultadoCotacao]:

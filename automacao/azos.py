@@ -4,7 +4,7 @@ import os, re, asyncio, tempfile
 from pathlib import Path
 from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario, resolver_captcha
-from models import Cobertura, ResultadoFase1, ResultadoCotacao
+from models import Cobertura, ResultadoFase1, ResultadoCotacao, SondagemPreco
 
 URL_LOGIN = "https://corretores.azos.com.br/login"
 URL_SIM   = "https://contratacao.azos.com.br/simulacao/dados-pessoais"
@@ -541,6 +541,118 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
             await fechar_browser(sess["pw"], sess["browser"])
 
     return resultados
+
+
+async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """
+    Sonda o prêmio mensal para a cobertura Morte (Seguro de vida) em capital âncora.
+    Reutiliza a sessão de fase1; seleciona a cobertura, avança até resumo,
+    captura o prêmio mensal e retorna preco_por_1000 = premio / (capital/1000).
+    NÃO finaliza proposta (não passa por DPS/cadastro).
+    """
+    sessao = _SESSOES.get(session_id)
+    if not sessao:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro="Sessão expirada",
+        )
+    page: Page = sessao["page"]
+    try:
+        # Esconde popup chat que pode interferir
+        await page.add_style_tag(content="""
+            [class*='chat'],[class*='copilot'],[class*='widget'],
+            [class*='Chat'],[class*='Copilot'],[class*='Widget'],
+            iframe[src*='chat'],iframe[src*='copilot'] {
+                display:none!important;pointer-events:none!important;
+            }
+        """)
+
+        # Garante página de coberturas
+        if "coberturas" not in page.url and "simulacao" not in page.url:
+            await page.goto(
+                "https://contratacao.azos.com.br/simulacao/coberturas",
+                wait_until="domcontentloaded", timeout=20_000,
+            )
+            await page.wait_for_timeout(1500)
+
+        # Reseta seleções prévias
+        await page.evaluate("""() => {
+            document.querySelectorAll(
+                'button.min-w-11.min-h-11.bg-primary[data-slot="tooltip-trigger"]'
+            ).forEach(btn => btn.click());
+            document.querySelectorAll(
+                'button[role="switch"][aria-checked="true"]'
+            ).forEach(sw => sw.click());
+        }""")
+        await page.wait_for_timeout(800)
+
+        # Seleciona Morte (Seguro de vida) com capital âncora
+        await _selecionar_cobertura(page, "Seguro de vida", float(capital))
+        await page.wait_for_timeout(2000)
+
+        # Tenta capturar preço do painel direito (preview sem avançar)
+        premio_preview = await page.evaluate("""() => {
+            const txt = document.body.innerText || '';
+            // Procura padrões "R$ X.XXX,XX" perto de mês/mensal/total/prêmio
+            const patterns = [
+                /(?:total|prêmio|premio|mensal)[^\\n]{0,40}R\\$\\s*([\\d.]+,\\d{2})/gi,
+                /R\\$\\s*([\\d.]+,\\d{2})\\s*\\/?\\s*(?:mês|mes|mensal|por\\s*mês)/gi,
+            ];
+            const found = [];
+            for (const pat of patterns) {
+                const matches = [...txt.matchAll(pat)];
+                for (const m of matches) found.push(m[1]);
+            }
+            return found;
+        }""")
+
+        premio_val: float | None = None
+        if premio_preview:
+            # Pega o menor valor encontrado (provavelmente o prêmio mensal)
+            vals = []
+            for v in premio_preview:
+                try:
+                    f = float(v.replace(".", "").replace(",", "."))
+                    if 5 <= f <= 5000:
+                        vals.append(f)
+                except Exception:
+                    pass
+            if vals:
+                premio_val = min(vals)
+                print(f"[azos] sondagem preview: R$ {premio_val:.2f}/mês para R$ {capital}", flush=True)
+
+        # Se preview não funcionou, avança para Resumo e captura lá
+        if premio_val is None:
+            await _clicar_continuar_azos(page)
+            await page.wait_for_timeout(4000)
+            txt = await page.inner_text("body")
+            premio_val = _extrair_premio_mensal(txt)
+            if premio_val:
+                print(f"[azos] sondagem via resumo: R$ {premio_val:.2f}/mês", flush=True)
+
+        if premio_val is None or premio_val <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=f"Prêmio não capturado | url={page.url}",
+            )
+
+        preco_1k = round(premio_val / (capital / 1000.0), 4)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa",
+            cobertura_nome="Seguro de vida",
+            capital_sondado=float(capital),
+            premio_mensal=premio_val,
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        print(f"[azos] erro sondagem morte: {e}", flush=True)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
 
 
 async def _percorrer_fluxo(page: Page, dados_cliente: dict) -> float | None:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio, os, re, unicodedata
 from playwright.async_api import Page
 from .base import novo_browser, fechar_browser, resolver_captcha
-from models import Cobertura, ResultadoFase1, ResultadoCotacao
+from models import Cobertura, ResultadoFase1, ResultadoCotacao, SondagemPreco
 
 URL_SIMULACAO = "https://digital.mag.com.br/contratacao/simulacao"
 CNPJ  = os.getenv("MAG_CNPJ", "")
@@ -685,6 +685,84 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
         print(f"[mag] ERRO fase1: {e}", flush=True)
         await fechar_browser(pw, browser)
         return ResultadoFase1(seguradora="mag", ok=False, erro=str(e))
+
+
+async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """
+    Sonda prêmio para Vida Inteira (CG 3082/3083) em capital âncora.
+    Reusa sessão fase1: adiciona produto, capta total da página, sem confirmar solução.
+    """
+    sessao = _SESSOES.get(session_id)
+    if not sessao:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro="Sessão expirada",
+        )
+    page: Page = sessao["page"]
+    try:
+        # Adiciona VIDA INTEIRA com capital âncora (em centavos = capital * 100)
+        await _adicionar_produto(page, "VIDA INTEIRA", int(capital))
+        await page.wait_for_timeout(2500)
+
+        # Tenta capturar total da página (CONTRIBUI/Total)
+        total_txt = await page.evaluate("""() => {
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            let node;
+            const found = [];
+            while ((node = walker.nextNode())) {
+                const t = node.textContent.trim();
+                if (/CONTRIBUI|TOTAL|prêmio|premio|mensal/i.test(t)) {
+                    // Sobe na árvore pra pegar contexto
+                    let el = node.parentElement;
+                    for (let i = 0; i < 5 && el; i++, el = el.parentElement) {
+                        const full = (el.innerText || '').trim();
+                        if (/R\\$\\s*[\\d.]+,\\d{2}/.test(full)) {
+                            found.push(full.substring(0, 200));
+                            break;
+                        }
+                    }
+                }
+            }
+            return found;
+        }""")
+
+        premio_val: float | None = None
+        for chunk in total_txt or []:
+            m = re.search(r'R\$\s*([\d.]+),(\d{2})', chunk)
+            if m:
+                try:
+                    f = float(m.group(1).replace(".", "") + "." + m.group(2))
+                    # Espera prêmio mensal entre R$ 5 e R$ 5000
+                    if 5 <= f <= 5000:
+                        premio_val = f
+                        break
+                except Exception:
+                    pass
+
+        if premio_val is None or premio_val <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=f"Prêmio não capturado | found={len(total_txt or [])}",
+            )
+
+        preco_1k = round(premio_val / (capital / 1000.0), 4)
+        print(f"[mag] sondagem Morte: R$ {premio_val:.2f}/mês para R$ {capital} (R$ {preco_1k:.4f}/1k)", flush=True)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa",
+            cobertura_nome="VIDA INTEIRA",
+            capital_sondado=float(capital),
+            premio_mensal=premio_val,
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
 
 
 async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[ResultadoCotacao]:

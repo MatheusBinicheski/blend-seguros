@@ -346,6 +346,28 @@ async def _executar_fase1(job_id: str, dados: dict):
 
     await asyncio.gather(*[coletar(seg) for seg in MODULOS])
     ok = sum(1 for r in job["fase1"].values() if r.ok)
+    job["status"] = "sondando_preco"
+    job["msg"] = f"{ok}/{len(MODULOS)} seguradoras ok — sondando preços..."
+
+    # Sondagem de preço para a linha Morte (R$ 100k âncora)
+    async def sondar(seg: str):
+        r = job["fase1"].get(seg)
+        if not r or not r.ok or not r.session_id:
+            return
+        mod = MODULOS[seg]
+        if not hasattr(mod, "sondar_preco_morte"):
+            return
+        try:
+            sond = await mod.sondar_preco_morte(r.session_id, capital=100_000)
+            r.sondagens.append(sond)
+            print(f"[blend] sondagem {seg}: premio={sond.premio_mensal} preço/1k={sond.preco_por_1000} erro={sond.erro}", flush=True)
+        except Exception as e:
+            print(f"[blend] sondagem {seg} exceção: {e}", flush=True)
+
+    # Sondagens sequenciais (cada uma usa Playwright; evitar OOM)
+    for seg in MODULOS:
+        await sondar(seg)
+
     job["status"] = "fase1_ok"
     job["msg"] = f"{ok}/{len(MODULOS)} seguradoras ok"
 
