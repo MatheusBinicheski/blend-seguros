@@ -211,6 +211,13 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
             return False
         await prof_inp.click()
         await page.wait_for_timeout(200)
+        # Limpa input (caso retry herdou texto anterior)
+        try:
+            await prof_inp.fill("")
+            await page.wait_for_timeout(200)
+        except Exception:
+            await page.keyboard.press("Control+a")
+            await page.keyboard.press("Delete")
         # press_sequentially dispara keydown/keypress/input — cmdk filtra ao input event
         await prof_inp.press_sequentially(termo, delay=80)
         await page.wait_for_timeout(1500)
@@ -257,27 +264,36 @@ async def _preencher_dados_pessoais(page: Page, d: dict):
         await page.wait_for_timeout(400)
         return True
 
-    try:
-        sucesso = await _tentar_selecionar_profissao(profissao_busca)
-        # Verifica se o botão tem agora o texto de uma profissão (não o placeholder)
-        await page.wait_for_timeout(300)
-        prof_label = await page.evaluate("""() => {
+    async def _profissao_selecionada() -> bool:
+        return await page.evaluate("""() => {
             const b = document.querySelector('button[name="professionId"]');
-            if (!b) return '';
+            if (!b) return false;
             const txt = (b.innerText || '').trim();
-            // Placeholder contém 'Digite' ou 'Profissão exercida'; valor real não
-            if (/digite|profissão exercida atualmente|selecione/i.test(txt) && !txt.split('\\n').some(l => l && !/digite|profissão exercida|selecione/i.test(l) && l.length > 3)) return '';
-            return txt;
+            // Placeholder contém 'Digite' ou 'Profissão exercida'; valor real não tem essa frase
+            return !/digite\\s*aqui|profissão exercida atualmente|selecione/i.test(txt) && txt.length > 3;
         }""")
-        if not prof_label and profissao_busca.lower() != "advogado":
-            print(f"[azos] profissão '{profissao_busca}' não selecionada, tentando 'Advogado'", flush=True)
-            # Fecha dialog se ainda aberto
+
+    try:
+        # Tenta termo original, depois variações progressivamente mais curtas, depois fallback Advogado
+        termos = [profissao_busca]
+        # Variações: primeiras 4 letras (busca parcial), e fallback Advogado
+        if len(profissao_busca) > 5:
+            termos.append(profissao_busca[:5])
+        if profissao_busca.lower() not in ("advogado", "advogada"):
+            termos.append("Advogado")
+
+        for termo in termos:
+            await _tentar_selecionar_profissao(termo)
+            await page.wait_for_timeout(400)
+            if await _profissao_selecionada():
+                print(f"[azos] profissão selecionada com termo '{termo}'", flush=True)
+                break
+            # Fecha dialog antes do próximo retry
             try:
                 await page.keyboard.press("Escape")
-                await page.wait_for_timeout(300)
+                await page.wait_for_timeout(400)
             except Exception:
                 pass
-            await _tentar_selecionar_profissao("Advogado")
     except Exception as e:
         print(f"[azos] erro selecionando profissão: {e}", flush=True)
     await page.wait_for_timeout(300)
