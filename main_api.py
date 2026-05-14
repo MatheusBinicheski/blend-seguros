@@ -265,10 +265,28 @@ async def resultado(request: Request, job_id: str):
 
 # ── Background tasks ──────────────────────────────────────────────────────────
 
+async def _limpar_sessoes_orfas():
+    """Fecha browsers de sessões antigas que ficaram em _SESSOES sem chamar fase2 (vaza memória)."""
+    from automacao import azos as _az, mag as _mg, omint as _om
+    from automacao.base import fechar_browser
+    for mod in (_az, _mg, _om):
+        sessoes = getattr(mod, "_SESSOES", {})
+        for sid in list(sessoes.keys()):
+            sess = sessoes.pop(sid, None)
+            if sess:
+                try:
+                    await fechar_browser(sess.get("pw"), sess.get("browser"))
+                    print(f"[blend] sessão órfã fechada: {sid}", flush=True)
+                except Exception as e:
+                    print(f"[blend] erro fechando sessão {sid}: {e}", flush=True)
+
+
 async def _executar_fase1(job_id: str, dados: dict):
     job = JOBS.get(job_id)
     if not job:
         return
+    # Limpa browsers vazados de jobs anteriores antes de começar (evita OOM)
+    await _limpar_sessoes_orfas()
     job["status"] = "coletando"
     job["msg"] = "Conectando às seguradoras..."
 
