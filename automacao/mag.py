@@ -293,10 +293,26 @@ async def _preencher_dados(page: Page, dados: dict):
         dados.get("estado", "Paulo"), teclado=True
     )
 
+    ocupacao = dados.get("ocupacao", "Profissional Liberal")
     await _escolher_react_select(
         page, "quoter_form__your-data__occupation__input",
-        dados.get("ocupacao", "Profissional Liberal")
+        ocupacao
     )
+    # Verifica se foi selecionado — se não, fallback para Profissional Liberal
+    await page.wait_for_timeout(500)
+    occ_value = await page.evaluate("""() => {
+        const el = document.querySelector('#quoter_form__your-data__occupation');
+        if (!el) return '';
+        const span = el.querySelector('[class*="singleValue"]');
+        return span ? span.innerText.trim() : '';
+    }""")
+    if not occ_value and ocupacao != "Profissional Liberal":
+        print(f"[mag] ocupação '{ocupacao}' não encontrada, fallback para 'Profissional Liberal'", flush=True)
+        await _escolher_react_select(
+            page, "quoter_form__your-data__occupation__input",
+            "Profissional Liberal"
+        )
+        await page.wait_for_timeout(500)
 
     await page.wait_for_timeout(600)
     works_inp = page.locator('#quoter_form__your-data__works_as__input')
