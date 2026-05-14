@@ -689,9 +689,44 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
     """
-    Sonda prêmio para Vida Inteira (CG 3082/3083) em capital âncora.
-    Reusa sessão fase1: adiciona produto, capta total da página, sem confirmar solução.
+    Sonda prêmio para Vida Inteira (CG 3082/3083).
+
+    Estratégia: reusa fase2_finalizar (que adiciona o produto, confirma solução,
+    captura o total). Mais lento que sondagem por preview mas confiável.
     """
+    nome = "VIDA INTEIRA"
+    try:
+        cotacoes = await fase2_finalizar(session_id, [{"nome": nome, "valor": capital}])
+        if not cotacoes:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro="Nenhuma cotação retornada",
+            )
+        c = cotacoes[0]
+        if c.erro or c.premio_mensal <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=(c.erro or "Prêmio zero")[:120],
+            )
+        preco_1k = round(c.premio_mensal / (capital / 1000.0), 4)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=float(capital),
+            premio_mensal=float(c.premio_mensal),
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
+
+
+async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """[DESATIVADA] capturar preview sem confirmar — não funcionou."""
     sessao = _SESSOES.get(session_id)
     if not sessao:
         return SondagemPreco(

@@ -290,12 +290,45 @@ async def _extrair_coberturas(page: Page) -> list[Cobertura]:
 
 async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
     """
-    Sonda prêmio para OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL em capital âncora.
-    Reusa sessão fase1: marca checkbox da cobertura, fill capital, avança e captura preço.
+    Sonda prêmio para OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL.
 
-    TODO: configurar comissão 25%/200% — descobrir onde está esse seletor na UI do Athena
-    (provavelmente em /produtos ou tela posterior). Por ora usa comissão padrão.
+    Estratégia: reusa fase2_finalizar (já testada). Mais lento mas confiável.
+
+    TODO: configurar comissão 25%/200% — descobrir onde está esse seletor na UI do Athena.
     """
+    nome = "OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL"
+    try:
+        cotacoes = await fase2_finalizar(session_id, [{"nome": nome, "valor": capital}])
+        if not cotacoes:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro="Nenhuma cotação retornada",
+            )
+        c = cotacoes[0]
+        if c.erro or c.premio_mensal <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=(c.erro or "Prêmio zero")[:120],
+            )
+        preco_1k = round(c.premio_mensal / (capital / 1000.0), 4)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=float(capital),
+            premio_mensal=float(c.premio_mensal),
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
+
+
+async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """[DESATIVADA] tentativa anterior."""
     sessao = _SESSOES.get(session_id)
     if not sessao:
         return SondagemPreco(

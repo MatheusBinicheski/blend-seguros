@@ -545,10 +545,47 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
 
 async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
     """
-    Sonda o prêmio mensal para a cobertura Morte (Seguro de vida) em capital âncora.
-    Reutiliza a sessão de fase1; seleciona a cobertura, avança até resumo,
-    captura o prêmio mensal e retorna preco_por_1000 = premio / (capital/1000).
-    NÃO finaliza proposta (não passa por DPS/cadastro).
+    Sonda o prêmio mensal para a cobertura Morte (Seguro de vida).
+
+    Estratégia: reusa fase2_finalizar (que já está testada e captura o prêmio
+    no fim do fluxo via _extrair_premio_mensal). O lado ruim é que percorre
+    DPS + cadastro até gerar uma cotação. O lado bom é que funciona.
+    """
+    nome = "Seguro de vida"
+    try:
+        cotacoes = await fase2_finalizar(session_id, [{"nome": nome, "valor": capital}])
+        if not cotacoes:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro="Nenhuma cotação retornada",
+            )
+        c = cotacoes[0]
+        if c.erro or c.premio_mensal <= 0:
+            return SondagemPreco(
+                linha_id="morte_qualquer_causa", cobertura_nome=nome,
+                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+                erro=(c.erro or "Prêmio zero")[:120],
+            )
+        preco_1k = round(c.premio_mensal / (capital / 1000.0), 4)
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=float(capital),
+            premio_mensal=float(c.premio_mensal),
+            preco_por_1000=preco_1k,
+        )
+    except Exception as e:
+        return SondagemPreco(
+            linha_id="morte_qualquer_causa", cobertura_nome=nome,
+            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
+            erro=str(e)[:120],
+        )
+
+
+async def _sondar_preco_morte_via_preview(session_id: str, capital: int = 100_000) -> SondagemPreco:
+    """
+    [DESATIVADA] Tentativa anterior — capturar preview sem avançar.
+    Não funcionou: AZOS calcula prêmio só no Resumo, painel direito fica R$ 0,00.
     """
     sessao = _SESSOES.get(session_id)
     if not sessao:
