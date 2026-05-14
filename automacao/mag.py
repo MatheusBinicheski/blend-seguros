@@ -703,7 +703,32 @@ async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> Sondage
     try:
         # Adiciona VIDA INTEIRA com capital âncora (em centavos = capital * 100)
         await _adicionar_produto(page, "VIDA INTEIRA", int(capital))
-        await page.wait_for_timeout(2500)
+        await page.wait_for_timeout(4000)
+
+        # Salva screenshot/HTML pra diag
+        try:
+            await page.screenshot(path="/tmp/mag_sondagem.png", full_page=True)
+            html = await page.content()
+            with open("/tmp/mag_sondagem.html", "w") as f:
+                f.write(html)
+        except Exception:
+            pass
+
+        # Captura TODOS os R$ X,XX da página + contexto
+        all_rs = await page.evaluate("""() => {
+            const txt = document.body.innerText || '';
+            const results = [];
+            for (const m of [...txt.matchAll(/R\\$\\s*([\\d.]+,\\d{2})/g)]) {
+                const idx = m.index;
+                const ctx = txt.substring(Math.max(0, idx-60), Math.min(txt.length, idx+30)).replace(/\\n/g, ' ');
+                results.push({val: m[1], ctx: ctx.trim()});
+                if (results.length >= 30) break;
+            }
+            return results;
+        }""")
+        print(f"[mag] sondagem R$ encontrados: {len(all_rs)}", flush=True)
+        for r in all_rs[:10]:
+            print(f"  R$ {r['val']} | ctx: {r['ctx'][:80]}", flush=True)
 
         # Tenta capturar total da página (CONTRIBUI/Total)
         total_txt = await page.evaluate("""() => {
@@ -740,11 +765,27 @@ async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> Sondage
                 except Exception:
                     pass
 
+        # Fallback: se total_txt não pegou, busca qualquer R$ entre 5 e 5000 perto de contexto "VIDA" ou "TOTAL"
+        if premio_val is None:
+            cand_fallback = []
+            for r in all_rs:
+                try:
+                    f = float(r['val'].replace(".", "").replace(",", "."))
+                    if 5 <= f <= 5000:
+                        cand_fallback.append((f, r['ctx']))
+                except Exception:
+                    pass
+            if cand_fallback:
+                # Pega o menor valor — provavelmente o prêmio mensal
+                cand_fallback.sort(key=lambda x: x[0])
+                premio_val = cand_fallback[0][0]
+                print(f"[mag] fallback heurística: R$ {premio_val:.2f} (de {len(cand_fallback)} candidatos)", flush=True)
+
         if premio_val is None or premio_val <= 0:
             return SondagemPreco(
                 linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
                 capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-                erro=f"Prêmio não capturado | found={len(total_txt or [])}",
+                erro=f"Prêmio não capturado | total_txt={len(total_txt or [])} all_rs={len(all_rs)}",
             )
 
         preco_1k = round(premio_val / (capital / 1000.0), 4)

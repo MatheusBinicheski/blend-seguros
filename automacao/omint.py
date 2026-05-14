@@ -333,24 +333,38 @@ async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> Sondage
         # Por enquanto, avança e captura o preço com comissão padrão
 
         await clicar_continuar(page)
-        await page.wait_for_timeout(4000)
+        await page.wait_for_timeout(5000)
 
-        # Captura prêmio do texto da página
+        # Salva screenshot/HTML pra debug
+        try:
+            await page.screenshot(path="/tmp/omint_sondagem.png", full_page=True)
+            html = await page.content()
+            with open("/tmp/omint_sondagem.html", "w") as f:
+                f.write(html)
+        except Exception:
+            pass
+
+        # Captura prêmio do texto da página com contexto
         txt = await page.inner_text("body")
-        premio_val: float | None = None
-        # Procura padrões "R$ X,XX"
         candidatos = []
         for m in re.finditer(r'R\$\s*([\d.]+),(\d{2})', txt):
             try:
                 f = float(m.group(1).replace(".", "") + "." + m.group(2))
                 if 5 <= f <= 5000:
-                    candidatos.append(f)
+                    idx = m.start()
+                    ctx = txt[max(0, idx-50):idx+30].replace("\n", " ").strip()
+                    candidatos.append((f, ctx))
             except Exception:
                 pass
-        # Heurística: prêmio mensal costuma ser o menor valor razoável
+        print(f"[omint] sondagem R$ candidatos: {len(candidatos)} | url={page.url}", flush=True)
+        for c in candidatos[:8]:
+            print(f"  R$ {c[0]:.2f} | ctx: {c[1][:80]}", flush=True)
+
+        premio_val: float | None = None
+        # Heurística: menor valor razoável é provavelmente o prêmio
         if candidatos:
-            premio_val = min(candidatos)
-            print(f"[omint] sondagem Morte: R$ {premio_val:.2f}/mês (de {len(candidatos)} candidatos)", flush=True)
+            premio_val = min(c[0] for c in candidatos)
+            print(f"[omint] sondagem Morte: R$ {premio_val:.2f}/mês (menor entre {len(candidatos)})", flush=True)
 
         if premio_val is None or premio_val <= 0:
             return SondagemPreco(

@@ -589,7 +589,29 @@ async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> Sondage
 
         # Seleciona Morte (Seguro de vida) com capital âncora
         await _selecionar_cobertura(page, "Seguro de vida", float(capital))
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(2500)
+
+        # Confirma que o capital foi setado corretamente
+        capital_check = await page.evaluate("""(target) => {
+            const inputs = document.querySelectorAll('input[type="tel"], input[type="number"]');
+            const vals = [];
+            for (const inp of inputs) {
+                const raw = (inp.value || '').replace(/\\D/g, '');
+                const n = parseInt(raw, 10) || 0;
+                if (n > 0) vals.push(n);
+            }
+            return {target, vals};
+        }""", capital)
+        print(f"[azos] sondagem capital check: target={capital_check['target']} vals={capital_check['vals']}", flush=True)
+
+        # Salva screenshot/html pra debug
+        try:
+            await page.screenshot(path="/tmp/azos_sondagem.png", full_page=True)
+            html = await page.content()
+            with open("/tmp/azos_sondagem.html", "w") as f:
+                f.write(html)
+        except Exception:
+            pass
 
         # Tenta capturar preço do painel direito (preview sem avançar)
         premio_preview = await page.evaluate("""() => {
@@ -604,8 +626,15 @@ async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> Sondage
                 const matches = [...txt.matchAll(pat)];
                 for (const m of matches) found.push(m[1]);
             }
-            return found;
+            // Também retorna TODOS os valores R$ X,XX da página pra debug
+            const allRs = [];
+            for (const m of [...txt.matchAll(/R\\$\\s*([\\d.]+,\\d{2})/g)]) {
+                allRs.push(m[1]);
+            }
+            return {found, allRs: allRs.slice(0, 20)};
         }""")
+        print(f"[azos] sondagem preview matches={premio_preview.get('found')} allR$={premio_preview.get('allRs')[:8]}", flush=True)
+        premio_preview = premio_preview.get('found', [])
 
         premio_val: float | None = None
         if premio_preview:
