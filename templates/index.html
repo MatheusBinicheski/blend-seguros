@@ -1980,8 +1980,8 @@
       </div>
     </div>
 
-    <!-- ── Pergunta 1: tipo de proteção ─────────────────────────────── -->
-    <div class="vsl-pergunta">1. Quem você quer proteger?</div>
+    <!-- ── Escolha do tipo de proteção ─────────────────────────────── -->
+    <div class="vsl-pergunta">Quem você quer proteger?</div>
 
     <div class="cobertura-cards">
 
@@ -2090,38 +2090,10 @@
 
     </div>
 
-    <!-- ── Pergunta 2: orçamento mensal ──────────────────────────────── -->
-    <div class="vsl-pergunta">2. Quanto você quer investir por mês?</div>
-
-    <div class="orcamento-cards">
-
-      <div class="orcamento-card" id="orc-50" onclick="selecionarOrcamento(50)">
-        <div class="orcamento-card-tag">Entrada</div>
-        <div class="orcamento-card-valor">R$ 50<small>/mês</small></div>
-        <div class="orcamento-card-cap">
-          Capital segurado até <b>~R$ 120 mil</b><br>
-          <span style="font-size:0.78em;opacity:0.75">Cobertura essencial pra começar protegido</span>
-        </div>
-      </div>
-
-      <div class="orcamento-card" id="orc-100" onclick="selecionarOrcamento(100)">
-        <div class="orcamento-card-tag destaque">Recomendado</div>
-        <div class="orcamento-card-valor">R$ 100<small>/mês</small></div>
-        <div class="orcamento-card-cap">
-          Capital segurado até <b>~R$ 250 mil</b><br>
-          <span style="font-size:0.78em;opacity:0.75">Equilíbrio entre custo e proteção robusta</span>
-        </div>
-      </div>
-
-      <div class="orcamento-card" id="orc-150" onclick="selecionarOrcamento(150)">
-        <div class="orcamento-card-tag">Robusto</div>
-        <div class="orcamento-card-valor">R$ 150<small>/mês</small></div>
-        <div class="orcamento-card-cap">
-          Capital segurado até <b>~R$ 380 mil</b><br>
-          <span style="font-size:0.78em;opacity:0.75">Cobertura ampla pra alta proteção</span>
-        </div>
-      </div>
-
+    <!-- Blend: sem trava de orçamento — o capital é calculado pela renda informada no form -->
+    <div class="aviso-box" style="margin:24px 0 8px">
+      <strong>Sem teto de prêmio.</strong> O Blend calcula o capital ideal para cada cobertura a partir da
+      sua renda e idade (informados no próximo passo) — você paga pelo planejamento, não por um valor fixo.
     </div>
 
     <button class="btn-cotar" id="btnAvancar" data-anchor="cotar" onclick="avancarParaForm()" disabled>
@@ -2148,7 +2120,6 @@
 
     <form id="formCotar">
       <input type="hidden" name="tipo_cobertura" id="tipoCoberturaInput"/>
-      <input type="hidden" name="orcamento"      id="orcamentoInput"/>
 
       <!-- CADASTRO -->
       <div class="sec-label">Identificação</div>
@@ -2669,7 +2640,6 @@
 
 // ── Seleção de cobertura + orçamento ────────────────────────────────────────
 let tipoSelecionado = null;
-let orcamentoSelecionado = null;
 
 const LABELS_COBERTURA = {
   em_vida:    'Proteção em Vida',
@@ -2678,8 +2648,7 @@ const LABELS_COBERTURA = {
 };
 
 function _atualizarBotaoAvancar() {
-  document.getElementById('btnAvancar').disabled =
-    !(tipoSelecionado && orcamentoSelecionado);
+  document.getElementById('btnAvancar').disabled = !tipoSelecionado;
 }
 
 function selecionarCobertura(tipo) {
@@ -2690,30 +2659,11 @@ function selecionarCobertura(tipo) {
   _atualizarBotaoAvancar();
 }
 
-function selecionarOrcamento(valor) {
-  orcamentoSelecionado = valor;
-  [50, 100, 150].forEach(v => {
-    document.getElementById('orc-' + v).classList.toggle('selecionado', v === valor);
-  });
-  _atualizarBotaoAvancar();
-}
-
 function avancarParaForm() {
-  if (!tipoSelecionado || !orcamentoSelecionado) return;
+  if (!tipoSelecionado) return;
   document.getElementById('tipoCoberturaInput').value = tipoSelecionado;
-  document.getElementById('orcamentoInput').value     = orcamentoSelecionado;
-  if (typeof fbq !== 'undefined') {
-    fbq('track', 'InitiateCheckout');
-    fbq('track', 'ViewContent', {
-      content_name:     LABELS_COBERTURA[tipoSelecionado],
-      content_category: 'Seguro de Vida',
-      content_type:     tipoSelecionado,
-      value:            orcamentoSelecionado,
-      currency:         'BRL',
-    });
-  }
   document.getElementById('badgeCobertura').innerHTML =
-    `<span class="badge-cobertura">${LABELS_COBERTURA[tipoSelecionado]} · R$ ${orcamentoSelecionado}/mês</span>`;
+    `<span class="badge-cobertura">${LABELS_COBERTURA[tipoSelecionado]}</span>`;
   document.getElementById('tela-vsl').style.display  = 'none';
   document.getElementById('tela-form').style.display = 'block';
   window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2729,7 +2679,7 @@ function fmtBRL(v) {
 const LOADER_MSGS = [
   'Abrindo portal AZOS e fazendo login...',
   'AZOS: preenchendo dados pessoais...',
-  'AZOS: calibrando coberturas para R$ 50/mês...',
+  'AZOS: calibrando coberturas conforme seu perfil...',
   'MAG: abrindo simulação Vida Inteira...',
   'MAG: confirmando cotação...',
   'Montando comparativo final...',
@@ -2755,8 +2705,6 @@ document.getElementById('formCotar').addEventListener('submit', async (e) => {
     fbq('trackCustom', 'CotacaoSolicitada', {
       tipo_cobertura: tipoSelecionado,
       content_name:   LABELS_COBERTURA[tipoSelecionado] || tipoSelecionado,
-      value:          orcamentoSelecionado || 50,
-      currency:       'BRL',
     });
   }
   const btn = document.getElementById('btnCotar');

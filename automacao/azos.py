@@ -355,162 +355,45 @@ async def fase2_selecionar_coberturas(session_id: str, selecoes: list[dict],
         print(f"[azos][fase2] coberturas selecionadas", flush=True)
         await page.screenshot(path=str(_TMP / "azos_debug_f2_01_coberturas.png"), full_page=False)
 
-        # ── Loop inteligente: calibra coberturas até R$50 e Continuar habilitado ──
-        BUDGET     = 50.0
-        TOLERANCIA = 3.5   # aceita R$46,50–R$53,50
-        limits     = coberturas_limits or {}
-        ativas     = list(selecoes)   # cópia mutável das coberturas selecionadas
-        _caso4_prev_vals: tuple | None = None   # detecta estagnação no Caso 4
+        # ── Blend: sem teto de prêmio — aplica os valores recomendados pelo perfil
+        # e só clampa aos limites reais do DOM (Azos pode ter min/max por idade/profissão).
+        limits = coberturas_limits or {}
+        print(f"[azos][fase2] clampando valores recomendados aos limites reais do DOM...", flush=True)
 
-        for adj_iter in range(12):
-            await page.wait_for_timeout(1_500)
+        novas = []
+        for sel in selecoes:
+            lim   = limits.get(sel["nome"], {})
+            v_min = float(lim.get("valor_min") or 50_000)
+            v_max = float(lim.get("valor_max") or 5_000_000)
+            try:
+                dom = await _ler_limites_slider(page, sel["nome"])
+                if dom.get("min"): v_min = max(v_min, dom["min"])
+                if dom.get("max"): v_max = min(v_max, dom["max"])
+            except Exception:
+                pass
+            valor = int(max(v_min, min(v_max, sel.get("valor", v_min))))
+            print(f"[azos][fase2]   {sel['nome'][:30]}: alvo={sel.get('valor')} -> clamp={valor} (min={v_min:.0f}, max={v_max:.0f})", flush=True)
+            novas.append({**sel, "valor": valor})
 
-            premio     = await _ler_premio_coberturas(page)
-            habilitado = await _continuar_habilitado(page)
-            p_str      = f"R${premio:.2f}" if premio is not None else "N/A"
-            print(f"[azos][adj] ══ iter={adj_iter} premio={p_str} "
-                  f"continuar={'OK' if habilitado else 'BLOQUEADO'}", flush=True)
+        # Re-aplica cada cobertura com o valor já clampado (assegura React captou)
+        for sel in novas:
+            await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+        selecoes = novas
 
-            # Caso 1 — Convergiu: prêmio dentro da margem e botão habilitado
-            if habilitado and premio is not None and abs(premio - BUDGET) <= TOLERANCIA:
-                print(f"[azos][adj] convergia! {p_str} — avancando", flush=True)
-                selecoes = ativas
-                break
+        # Espera React processar e estabilizar prêmio
+        await page.wait_for_timeout(3_000)
 
-            # Caso 2 — Prêmio ok mas Continuar bloqueado
-            # React não reconheceu o estado → recicla switches (off→on) e re-aplica sliders
-            if premio is not None and abs(premio - BUDGET) <= TOLERANCIA and not habilitado:
-                print(f"[azos][adj] premio ok mas continuar bloqueado → reciclando switches", flush=True)
-                await page.evaluate("""() => {
-                    document.querySelectorAll('button[role="switch"][aria-checked="true"]')
-                        .forEach(sw => sw.click());
-                }""")
-                await page.wait_for_timeout(800)
-                for sel in ativas:
-                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
-                await page.wait_for_timeout(600)
-                continue
-
-            # Caso 3 — Prêmio alto demais → escala para baixo
-            if premio is not None and premio > BUDGET + TOLERANCIA:
-                ratio = BUDGET / premio
-                novas = []
-                todas_no_min = True
-                for sel in ativas:
-                    lim   = limits.get(sel["nome"], {})
-                    v_min = float(lim.get("valor_min") or 50_000)
-                    v_max = float(lim.get("valor_max") or 5_000_000)
-                    # Lê mínimo real do DOM (mais confiável que metadado de fase1)
-                    dom   = await _ler_limites_slider(page, sel["nome"])
-                    if dom.get("min"):
-                        v_min = max(v_min, dom["min"])
-                    if dom.get("max"):
-                        v_max = min(v_max, dom["max"])
-                    novo_v = round(sel["valor"] * ratio / 1_000) * 1_000
-                    novo_v = int(max(v_min, min(v_max, novo_v)))
-                    if novo_v > v_min:
-                        todas_no_min = False
-                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v}", flush=True)
-                    novas.append({**sel, "valor": novo_v})
-
-                # Sub-caso: todas no mínimo e ainda caro
-                if todas_no_min:
-                    if len(ativas) > 1:
-                        mais_cara = max(
-                            ativas,
-                            key=lambda s: float(limits.get(s["nome"], {}).get("valor_min") or 0)
-                        )
-                        print(f"[azos][adj] todas no min + caro → desligando '{mais_cara['nome'][:25]}'", flush=True)
-                        await _desligar_cobertura(page, mais_cara["nome"])
-                        ativas = [s for s in ativas if s["nome"] != mais_cara["nome"]]
-                    else:
-                        # Única cobertura no mínimo e ainda cara
-                        # Tenta trocar para "Morte acidental" se ainda não estiver usando
-                        # (taxa 0.050 → menor mínimo real no Azos)
-                        nome_unico = ativas[0]["nome"].lower()
-                        nomes_disp = list(limits.keys()) if limits else []
-                        nome_morte = next(
-                            (n for n in nomes_disp if "morte acidental" in n.lower()), None
-                        )
-                        nome_inv = next(
-                            (n for n in nomes_disp if "invalidez total por acidente" in n.lower()), None
-                        )
-                        alternativa = None
-                        if nome_morte and "morte acidental" not in nome_unico:
-                            alternativa = nome_morte
-                        elif nome_inv and "invalidez total por acidente" not in nome_unico:
-                            alternativa = nome_inv
-                        if alternativa:
-                            print(f"[azos][adj] unica cob cara → trocando para '{alternativa[:30]}'", flush=True)
-                            await _desligar_cobertura(page, ativas[0]["nome"])
-                            novo_cap = max(50_000, min(5_000_000,
-                                int(round(BUDGET / 0.050 * 1_000 / 1_000) * 1_000)))
-                            ativas = [{"nome": alternativa, "valor": novo_cap}]
-                            await _selecionar_cobertura(page, alternativa, novo_cap)
-                            await page.wait_for_timeout(800)
-                        else:
-                            # Sem alternativa — aceita o prêmio do mínimo
-                            print(f"[azos][adj] cobertura unica no min → aceita {p_str}", flush=True)
-                            selecoes = ativas
-                            break
-                else:
-                    for sel in novas:
-                        await _selecionar_cobertura(page, sel["nome"], sel["valor"])
-                    ativas = novas
-
-                await page.screenshot(path=str(_TMP / f"azos_debug_adj_{adj_iter:02d}.png"))
-                continue
-
-            # Caso 4 — Continuar bloqueado (prêmio baixo/nulo ou inputs não atualizaram React)
-            if not habilitado:
-                cur_vals = tuple(s["valor"] for s in ativas)
-                if _caso4_prev_vals == cur_vals:
-                    # Valores idênticos em 2 iterações seguidas → inputs disabled não respondem.
-                    # Sai do loop e deixa o mecanismo de force-click do loop externo agir.
-                    print(f"[azos][adj] Caso4 sem progresso (inputs disabled) → saindo do loop adj", flush=True)
-                    selecoes = ativas
-                    break
-                _caso4_prev_vals = cur_vals
-
-                print(f"[azos][adj] continuar bloqueado + premio baixo → forcando minimos DOM", flush=True)
-                novas = []
-                for sel in ativas:
-                    dom   = await _ler_limites_slider(page, sel["nome"])
-                    v_min = max(
-                        float(limits.get(sel["nome"], {}).get("valor_min") or 50_000),
-                        dom.get("min", 0)
-                    )
-                    novo_v = int(max(sel["valor"], v_min))
-                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v} (dom_min={dom.get('min',0):.0f})", flush=True)
-                    novas.append({**sel, "valor": novo_v})
-                for sel in novas:
-                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
-                ativas = novas
-                continue
-
-            # Caso 5 — Prêmio abaixo do alvo e botão habilitado → escala para cima
-            if premio is not None and premio < BUDGET - TOLERANCIA and habilitado:
-                ratio = BUDGET / premio
-                novas = []
-                for sel in ativas:
-                    lim   = limits.get(sel["nome"], {})
-                    v_max = float(lim.get("valor_max") or 5_000_000)
-                    dom   = await _ler_limites_slider(page, sel["nome"])
-                    if dom.get("max"):
-                        v_max = min(v_max, dom["max"])
-                    novo_v = round(sel["valor"] * ratio / 1_000) * 1_000
-                    novo_v = int(min(v_max, novo_v))
-                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v}", flush=True)
-                    novas.append({**sel, "valor": novo_v})
-                for sel in novas:
-                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
-                ativas = novas
-                continue
-
-        else:
-            # Esgotou iterações — usa o que estiver disponível e segue em frente
-            print(f"[azos][adj] max iteracoes — seguindo com estado atual", flush=True)
-            selecoes = ativas
+        # Se Continuar continuar bloqueado, recicla switches uma vez (workaround React)
+        if not await _continuar_habilitado(page):
+            print(f"[azos][fase2] Continuar bloqueado - reciclando switches uma vez", flush=True)
+            await page.evaluate("""() => {
+                document.querySelectorAll('button[role="switch"][aria-checked="true"]')
+                    .forEach(sw => sw.click());
+            }""")
+            await page.wait_for_timeout(800)
+            for sel in selecoes:
+                await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+            await page.wait_for_timeout(2_500)
 
         # ── Para AQUI: blend só precisa da cotação, não da proposta ─────
         print(f"[azos][fase2] calibração finalizada — capturando prêmio final", flush=True)

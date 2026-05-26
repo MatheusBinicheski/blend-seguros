@@ -18,7 +18,7 @@ load_dotenv()
 
 from automacao.azos        import fase1_dados_pessoais, fase2_selecionar_coberturas
 from automacao         import mag as mag_mod
-from automacao.recomendador import recomendar
+from automacao.recomendador import recomendar, capital_recomendado_morte
 
 app   = FastAPI(title="Blend Seguros — Cotação")
 _BASE = Path(__file__).parent
@@ -36,11 +36,13 @@ _jobs: Dict[str, Dict[str, Any]] = {}
 _MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "1"))
 _sem: asyncio.Semaphore | None = None
 
-# Mapeamento tipo_cobertura → capital MAG Vida Inteira (alvo de cobertura por morte)
-_CAPITAL_MAG_POR_TIPO = {
-    "em_vida":    100_000,   # foco em vida; MAG complementa com morte mínima
-    "apos_morte": 500_000,   # foco em morte; MAG entra forte
-    "mix":        300_000,   # meio termo
+# Quando o usuário escolhe "em_vida" (foco em invalidez/doenças graves) reduzimos
+# o capital MAG (morte) para um piso simbólico; nos outros casos usamos o capital
+# completo recomendado pela renda (10x renda anual).
+_FATOR_MAG_POR_TIPO = {
+    "em_vida":    0.2,   # MAG complementar — 20% do recomendado
+    "apos_morte": 1.0,   # MAG entra com cobertura plena por renda
+    "mix":        0.6,   # meio termo
 }
 
 
@@ -206,7 +208,7 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
                 result["azos"] = {"erro": fase1["erro"][:300]}
             else:
                 _job_set(job_id, pct=30,
-                         msg="Azos: selecionando coberturas e calibrando prêmio...")
+                         msg="Azos: montando planejamento conforme seu perfil...")
                 coberturas_limits = {c["nome"]: c for c in fase1["coberturas"]}
                 nomes = list(coberturas_limits.keys())
                 selecoes = recomendar(cliente, nomes, tipo_cobertura=tipo_cob)
@@ -236,7 +238,9 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
         try:
             _job_set(job_id, pct=65,
                      msg="MAG: consultando Vida Inteira (CG 3082/3083)...")
-            capital_mag = _CAPITAL_MAG_POR_TIPO.get(tipo_cob, 300_000)
+            capital_base = capital_recomendado_morte(cliente)
+            fator = _FATOR_MAG_POR_TIPO.get(tipo_cob, 0.6)
+            capital_mag = max(50_000, int(round(capital_base * fator / 10_000) * 10_000))
             mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
             result["mag"] = {
                 "premio_mensal": mag_out.get("premio_mensal"),
