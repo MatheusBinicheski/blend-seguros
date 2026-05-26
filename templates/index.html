@@ -2680,7 +2680,7 @@ const LOADER_MSGS = [
   'Abrindo portal AZOS e fazendo login...',
   'AZOS: preenchendo dados pessoais...',
   'AZOS: calibrando coberturas conforme seu perfil...',
-  'MAG: abrindo simulação Vida Inteira...',
+  'MAG: abrindo simulação SAF Essencial Familiar...',
   'MAG: confirmando cotação...',
   'Montando comparativo final...',
 ];
@@ -2884,7 +2884,7 @@ function renderResultado(data) {
     ? `<div class="erro-box" style="margin-top:12px">MAG: ${mag.erro}</div>`
     : `
       <div style="margin-top:28px">
-        <div class="res-eyebrow" style="margin-bottom:10px">MAG · ${mag.produto || 'Vida Inteira'} · Prêmio mensal</div>
+        <div class="res-eyebrow" style="margin-bottom:10px">MAG · ${mag.produto || 'SAF Essencial Familiar'} · Prêmio mensal</div>
         <div class="res-premio" style="font-size:clamp(2.6rem,5.5vw,4rem)">${fmtBRL(premioMag)}</div>
         <div class="res-anual">Capital segurado: R$ ${capMag}</div>
       </div>`;

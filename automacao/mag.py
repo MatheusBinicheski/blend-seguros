@@ -446,8 +446,22 @@ async def _adicionar_produto(page: Page, nome: str, capital):
         codigo = result.get("code")
         print(f"  [JS] selecionado: {result.get('text')}", flush=True)
     else:
+        # Captura todas as opções visíveis no dropdown para diagnóstico
+        try:
+            opcoes_visiveis = await page.evaluate("""() => {
+                const out = [];
+                for (const el of document.querySelectorAll('div, li, span')) {
+                    if (el.children.length > 0 || !el.offsetParent) continue;
+                    const t = (el.textContent || '').trim();
+                    if (/^.+\\(\\d+\\)\\s*$/.test(t)) out.push(t);
+                }
+                return out.slice(0, 12);
+            }""")
+        except Exception:
+            opcoes_visiveis = []
+        await page.screenshot(path="/tmp/mag_produto_nao_encontrado.png", full_page=True)
         await page.keyboard.press("Escape")
-        print(f"  ⚠️ nenhuma opção para: {nome}", flush=True)
+        print(f"  ⚠️ nenhuma opção para: '{nome}'. Disponíveis: {opcoes_visiveis}", flush=True)
         return
     await page.wait_for_timeout(3000)
 
@@ -689,12 +703,12 @@ async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> Result
 
 async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
     """
-    Sonda prêmio para Vida Inteira (CG 3082/3083).
+    Sonda prêmio para SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061).
 
     Estratégia: reusa fase2_finalizar (que adiciona o produto, confirma solução,
     captura o total). Mais lento que sondagem por preview mas confiável.
     """
-    nome = "VIDA INTEIRA"
+    nome = "SAF ESSENCIAL FAMILIAR"
     try:
         cotacoes = await fase2_finalizar(session_id, [{"nome": nome, "valor": capital}])
         if not cotacoes:
@@ -730,14 +744,14 @@ async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100
     sessao = _SESSOES.get(session_id)
     if not sessao:
         return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+            linha_id="morte_qualquer_causa", cobertura_nome="SAF ESSENCIAL FAMILIAR (3061)",
             capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
             erro="Sessão expirada",
         )
     page: Page = sessao["page"]
     try:
-        # Adiciona VIDA INTEIRA com capital âncora (em centavos = capital * 100)
-        await _adicionar_produto(page, "VIDA INTEIRA", int(capital))
+        # Adiciona SAF ESSENCIAL FAMILIAR com capital âncora (em centavos = capital * 100)
+        await _adicionar_produto(page, "SAF ESSENCIAL FAMILIAR", int(capital))
         await page.wait_for_timeout(4000)
 
         # Salva screenshot/HTML pra diag
@@ -818,7 +832,7 @@ async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100
 
         if premio_val is None or premio_val <= 0:
             return SondagemPreco(
-                linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+                linha_id="morte_qualquer_causa", cobertura_nome="SAF ESSENCIAL FAMILIAR (3061)",
                 capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
                 erro=f"Prêmio não capturado | total_txt={len(total_txt or [])} all_rs={len(all_rs)}",
             )
@@ -827,7 +841,7 @@ async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100
         print(f"[mag] sondagem Morte: R$ {premio_val:.2f}/mês para R$ {capital} (R$ {preco_1k:.4f}/1k)", flush=True)
         return SondagemPreco(
             linha_id="morte_qualquer_causa",
-            cobertura_nome="VIDA INTEIRA",
+            cobertura_nome="SAF ESSENCIAL FAMILIAR (3061)",
             capital_sondado=float(capital),
             premio_mensal=premio_val,
             preco_por_1000=preco_1k,
@@ -835,7 +849,7 @@ async def _sondar_preco_morte_preview_antigo(session_id: str, capital: int = 100
     except Exception as e:
         import traceback; traceback.print_exc()
         return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome="VIDA INTEIRA",
+            linha_id="morte_qualquer_causa", cobertura_nome="SAF ESSENCIAL FAMILIAR (3061)",
             capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
             erro=str(e)[:120],
         )
@@ -884,16 +898,16 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Wrapper alto nível usado pelo blend: faz fase1 + cotação Vida Inteira e fecha
+# Wrapper alto nível usado pelo blend: faz fase1 + cotação SAF Essencial Familiar e fecha
 # o browser. Não emite proposta — para na cotação.
 # ──────────────────────────────────────────────────────────────────────────────
 async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) -> dict:
     """
-    Faz cotação MAG Vida Inteira (CG 3082/3083) para o capital informado.
+    Faz cotação MAG SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061) para o capital informado.
     Retorna {"premio_mensal": float|None, "capital": int, "erro": str|None}.
     """
     out = {"premio_mensal": None, "capital": int(capital), "erro": None,
-           "produto": "VIDA INTEIRA"}
+           "produto": "SAF ESSENCIAL FAMILIAR (3061)"}
     try:
         # Adapta dict do form unificado (appguardianseguros) ao schema esperado pelo MAG.
         dados = {
@@ -909,7 +923,7 @@ async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) ->
             return out
 
         cotacoes = await fase2_finalizar(r1.session_id, [
-            {"nome": "VIDA INTEIRA", "valor": int(capital)},
+            {"nome": "SAF ESSENCIAL FAMILIAR", "valor": int(capital)},
         ])
         if not cotacoes:
             out["erro"] = "Nenhuma cotação retornada"
@@ -918,6 +932,9 @@ async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) ->
         if c.erro:
             out["erro"] = c.erro[:200]
         out["premio_mensal"] = float(c.premio_mensal) if c.premio_mensal else None
+        # Falha explícita quando produto não foi encontrado / prêmio zerou silenciosamente
+        if out["premio_mensal"] is None and not out.get("erro"):
+            out["erro"] = "MAG não retornou prêmio — produto pode ter mudado de nome no catálogo"
     except Exception as e:
         out["erro"] = str(e)[:200]
     return out

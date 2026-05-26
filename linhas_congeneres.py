@@ -103,8 +103,8 @@ MORTE_QUALQUER_CAUSA = LinhaCongenere(
         ),
         "mag": CoberturaSeguradora(
             seguradora="mag",
-            nome_oficial="Vida Inteira (CG 3082/3083)",
-            nome_no_sistema="VIDA INTEIRA",
+            nome_oficial="SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
+            nome_no_sistema="SAF ESSENCIAL FAMILIAR",
             descricao_curta="Vitalícia até a morte; reajuste por idade conforme tabela de fatores 1,0106→1,4964.",
             fonte_cg_url="https://magportaisinststgprd.blob.core.windows.net/magseguros/2025/03/3082-e-3083-Condicoes-Gerais-Vida-Inteira.pdf",
             susep="15414.604647/2025-87",

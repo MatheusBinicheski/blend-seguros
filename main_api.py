@@ -238,7 +238,7 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
         # Sequencial após AZOS (Railway: 2 Chromium juntos = OOM).
         try:
             _job_set(job_id, pct=65,
-                     msg="MAG: consultando Vida Inteira (CG 3082/3083)...")
+                     msg="MAG: consultando SAF Essencial Familiar (3061)...")
             capital_base = capital_recomendado_morte(cliente)
             fator = _FATOR_MAG_POR_TIPO.get(tipo_cob, 0.6)
             capital_mag = max(50_000, int(round(capital_base * fator / 10_000) * 10_000))

@@ -150,7 +150,7 @@ def recomendar(cliente: dict, coberturas_disponiveis: list[str],
 
 
 def capital_recomendado_morte(cliente: dict) -> int:
-    """Capital sugerido para Vida Inteira da MAG (10x renda anual)."""
+    """Capital sugerido para SAF Essencial Familiar da MAG (10x renda anual)."""
     renda = float(cliente.get("renda_mensal") or 0)
     idade = calcular_idade(cliente.get("nascimento", "01/01/1985"))
     return _capital_por_renda("vida", renda, idade)
