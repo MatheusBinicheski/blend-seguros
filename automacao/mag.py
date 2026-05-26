@@ -881,3 +881,43 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
             await fechar_browser(sess["pw"], sess["browser"])
 
     return resultados
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Wrapper alto nível usado pelo blend: faz fase1 + cotação Vida Inteira e fecha
+# o browser. Não emite proposta — para na cotação.
+# ──────────────────────────────────────────────────────────────────────────────
+async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) -> dict:
+    """
+    Faz cotação MAG Vida Inteira (CG 3082/3083) para o capital informado.
+    Retorna {"premio_mensal": float|None, "capital": int, "erro": str|None}.
+    """
+    out = {"premio_mensal": None, "capital": int(capital), "erro": None,
+           "produto": "VIDA INTEIRA"}
+    try:
+        # Adapta dict do form unificado (appguardianseguros) ao schema esperado pelo MAG.
+        dados = {
+            **cliente,
+            "renda_mensal": str(cliente.get("renda_mensal") or "5000"),
+            "profissao":    cliente.get("profissao") or "Advogado",
+            "ocupacao":     cliente.get("ocupacao")  or "Profissional Liberal",
+            "sexo":         cliente.get("sexo", "M"),
+        }
+        r1 = await fase1_coletar_coberturas(dados, headless=headless)
+        if not r1.ok or not r1.session_id:
+            out["erro"] = r1.erro or "fase1 falhou"
+            return out
+
+        cotacoes = await fase2_finalizar(r1.session_id, [
+            {"nome": "VIDA INTEIRA", "valor": int(capital)},
+        ])
+        if not cotacoes:
+            out["erro"] = "Nenhuma cotação retornada"
+            return out
+        c = cotacoes[0]
+        if c.erro:
+            out["erro"] = c.erro[:200]
+        out["premio_mensal"] = float(c.premio_mensal) if c.premio_mensal else None
+    except Exception as e:
+        out["erro"] = str(e)[:200]
+    return out

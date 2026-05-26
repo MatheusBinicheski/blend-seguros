@@ -1,110 +1,823 @@
-{% extends "base.html" %}
-{% block title %}Nova Cotação — Blend Seguros{% endblock %}
-{% block content %}
-<h1>Blend Seguros — Nova Cotação</h1>
-<div class="card">
-  <h2>Dados do Cliente</h2>
-  <form method="post" action="/cotar" onsubmit="return validarForm(this)">
-    <div class="grid-2" style="margin-bottom:16px">
-      <div>
-        <label for="nome">Nome completo</label>
-        <input id="nome" name="nome" type="text" required placeholder="João da Silva">
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Blend Seguros — Cotação</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+           background: #f0f2f5; min-height: 100vh; color: #1a1f36; }
+
+    header { background: #1a1f36; color: #fff; padding: 16px 32px; }
+    header h1 { font-size: 1.1rem; font-weight: 700; }
+    header span { font-size: .8rem; opacity: .45; margin-left: 8px; }
+
+    .container { max-width: 760px; margin: 36px auto; padding: 0 20px 80px; }
+
+    .card { background: #fff; border-radius: 14px; padding: 30px 32px;
+            box-shadow: 0 2px 16px rgba(0,0,0,.08); margin-bottom: 20px; }
+    .card-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 24px;
+                  padding-bottom: 14px; border-bottom: 2px solid #f0f2f5; }
+
+    .sec-label { font-size: .72rem; font-weight: 700; text-transform: uppercase;
+                 letter-spacing: .07em; color: #4f6ef7; margin: 22px 0 12px; }
+
+    .grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .full  { grid-column: 1 / -1; }
+
+    label.fl { display: block; font-size: .8rem; font-weight: 600; color: #555; margin-bottom: 5px; }
+    input[type="text"], input[type="number"] {
+      width: 100%; padding: 10px 13px; border: 1.5px solid #dde1ea;
+      border-radius: 8px; font-size: .9rem; color: #1a1f36;
+      transition: border-color .15s; background: #fff; }
+    input:focus { outline: none; border-color: #4f6ef7; }
+
+    .radio-row { display: flex; gap: 16px; margin-top: 6px; }
+    .radio-row label { display: flex; align-items: center; gap: 6px;
+                       font-size: .9rem; cursor: pointer; font-weight: 400; }
+
+    .pergunta-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 13px 0; border-bottom: 1px solid #f0f2f5; gap: 12px;
+    }
+    .pergunta-row:last-child { border-bottom: none; }
+    .pergunta-texto { font-size: .88rem; color: #333; flex: 1; line-height: 1.4; }
+    .toggle-group { display: flex; gap: 8px; flex-shrink: 0; }
+    .toggle-group input[type="radio"] { display: none; }
+    .toggle-group label {
+      padding: 6px 16px; border-radius: 20px; font-size: .82rem; font-weight: 600;
+      cursor: pointer; border: 1.5px solid #dde1ea; color: #777;
+      transition: all .15s; white-space: nowrap; background: #fff;
+    }
+    .toggle-group input[value="sim"]:checked + label { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+    .toggle-group input[value="nao"]:checked + label { background: #d1fae5; color: #065f46; border-color: #6ee7b7; }
+
+    .btn-cotar { width: 100%; padding: 15px; background: #4f6ef7; color: #fff;
+                 border: none; border-radius: 10px; font-size: 1rem; font-weight: 700;
+                 cursor: pointer; margin-top: 28px; transition: background .15s; }
+    .btn-cotar:hover { background: #3a57e8; }
+    .btn-cotar:disabled { background: #a0aec0; cursor: not-allowed; }
+
+    /* Resultado */
+    #resultado { display: none; margin-top: 4px; }
+    .res-hero { text-align: center; padding: 20px 0 24px; }
+    .res-divider { height: 1px; background: #f0f2f5; margin: 4px 0 20px; }
+
+    /* Cards de seguradoras lado a lado */
+    .seg-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 8px 0 24px; }
+    @media (max-width: 560px) { .seg-grid { grid-template-columns: 1fr; } }
+    .seg-card { background: #f7f8fc; border-radius: 12px; padding: 22px 20px; text-align: center;
+                border: 2px solid transparent; transition: border-color .15s; }
+    .seg-card.ok      { border-color: #4f6ef7; background: #f5f7ff; }
+    .seg-card.erro    { border-color: #fca5a5; background: #fff5f5; }
+    .seg-nome    { font-size: .72rem; font-weight: 700; letter-spacing: .12em;
+                   text-transform: uppercase; color: #888; margin-bottom: 6px; }
+    .seg-premio  { font-size: 2.2rem; font-weight: 800; color: #4f6ef7; line-height: 1.05; }
+    .seg-anual   { font-size: .8rem; color: #888; margin-top: 4px; }
+    .seg-detalhe { font-size: .78rem; color: #555; margin-top: 12px; line-height: 1.45; }
+    .seg-erro    { font-size: .82rem; color: #b91c1c; font-weight: 600; margin-top: 8px; }
+
+    .cob-row { display: flex; justify-content: space-between; align-items: center;
+               padding: 10px 14px; background: #fff; border-radius: 8px; margin-bottom: 6px;
+               border: 1px solid #eef0f7; }
+    .cob-nome { font-weight: 700; font-size: .82rem; color: #1a1f36; }
+    .cob-mot  { font-size: .7rem; color: #888; margin-top: 2px; line-height: 1.4; }
+    .cob-val  { font-size: .85rem; font-weight: 800; color: #4f6ef7; white-space: nowrap; margin-left: 12px; }
+
+    .erro-box { background: #fee2e2; color: #991b1b; border-radius: 10px;
+                padding: 14px 18px; font-size: .88rem; margin-top: 16px; }
+    .btn-novo { background: #f0f2f5; color: #555; border: none; border-radius: 9px;
+                padding: 11px 22px; font-size: .9rem; font-weight: 600;
+                cursor: pointer; margin-top: 20px; }
+
+    .loader-overlay { display: none; position: fixed; inset: 0; background: rgba(26,31,54,.65);
+                      z-index: 100; flex-direction: column; align-items: center;
+                      justify-content: center; gap: 16px; }
+    .loader-overlay.show { display: flex; }
+    .spinner { width: 46px; height: 46px; border: 4px solid rgba(255,255,255,.25);
+               border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+    .loader-text { color: #fff; font-size: .95rem; font-weight: 600; max-width: 320px; text-align: center; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .aviso-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px;
+                 padding: 12px 16px; font-size: .82rem; color: #92400e; margin-bottom: 20px; }
+
+    .vsl-headline {
+      font-size: 1.55rem; font-weight: 800; color: #1a1f36; line-height: 1.25;
+      margin-bottom: 10px; text-align: center;
+    }
+    .vsl-sub {
+      font-size: .95rem; color: #555; text-align: center; margin-bottom: 28px; line-height: 1.6;
+    }
+    .vsl-beneficios {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 32px;
+    }
+    .vsl-beneficio {
+      display: flex; align-items: flex-start; gap: 10px;
+      background: #f7f8fc; border-radius: 10px; padding: 12px 14px;
+    }
+    .vsl-beneficio-icon {
+      width: 28px; height: 28px; flex-shrink: 0; background: #e0e7ff;
+      border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    }
+    .vsl-beneficio-icon svg { width: 16px; height: 16px; color: #4f6ef7; }
+    .vsl-beneficio-texto { font-size: .82rem; font-weight: 600; color: #334155; line-height: 1.4; }
+
+    .vsl-pergunta {
+      font-size: 1.05rem; font-weight: 700; color: #1a1f36;
+      text-align: center; margin-bottom: 20px;
+    }
+
+    .seg-pill-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-bottom: 18px; }
+    .seg-pill { background: #eef2ff; color: #3730a3; border-radius: 20px; padding: 5px 14px;
+                font-size: .78rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+
+    .vsl-preco-destaque {
+      text-align: center; background: linear-gradient(135deg, #4f6ef7 0%, #7c3aed 100%);
+      color: #fff; border-radius: 14px; padding: 20px 24px; margin-bottom: 28px;
+    }
+    .vsl-preco-destaque .preco { font-size: 2.8rem; font-weight: 800; line-height: 1; }
+    .vsl-preco-destaque .preco-label { font-size: .85rem; opacity: .8; margin-top: 4px; }
+
+    .cobertura-cards { display: grid; grid-template-columns: 1fr; gap: 14px; margin-bottom: 24px; }
+    .cobertura-card {
+      border: 2px solid #dde1ea; border-radius: 14px; padding: 20px 22px;
+      cursor: pointer; transition: all .18s; position: relative;
+    }
+    .cobertura-card:hover { border-color: #4f6ef7; box-shadow: 0 2px 12px rgba(79,110,247,.12); }
+    .cobertura-card.selecionado {
+      border-color: #4f6ef7; background: #f5f7ff;
+      box-shadow: 0 0 0 3px rgba(79,110,247,.18);
+    }
+    .cobertura-card-check {
+      position: absolute; top: 16px; right: 18px;
+      width: 22px; height: 22px; border-radius: 50%;
+      border: 2px solid #dde1ea; background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      transition: all .18s;
+    }
+    .cobertura-card.selecionado .cobertura-card-check {
+      background: #4f6ef7; border-color: #4f6ef7;
+    }
+    .cobertura-card.selecionado .cobertura-card-check::after {
+      content: ''; display: block; width: 6px; height: 10px;
+      border: 2px solid #fff; border-top: none; border-left: none;
+      transform: rotate(45deg) translate(-1px, -1px);
+    }
+    .cobertura-card-titulo {
+      font-size: 1rem; font-weight: 700; color: #1a1f36; margin-bottom: 6px;
+    }
+    .cobertura-card-desc {
+      font-size: .83rem; color: #64748b; line-height: 1.5; margin-bottom: 12px;
+    }
+    .cobertura-card-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+    .cobertura-tag {
+      font-size: .72rem; font-weight: 600; background: #e0e7ff; color: #3730a3;
+      border-radius: 20px; padding: 3px 10px;
+    }
+    .cobertura-tag.verde { background: #d1fae5; color: #065f46; }
+    .cobertura-tag.azul  { background: #dbeafe; color: #1d4ed8; }
+
+    @media (max-width: 520px) {
+      .vsl-beneficios { grid-template-columns: 1fr; }
+      .vsl-headline { font-size: 1.25rem; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Blend Seguros<span>· Cotação Automática</span></h1>
+</header>
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TELA 0 — VSL + Escolha de cobertura
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div id="tela-vsl" class="container">
+  <div class="card">
+
+    <!-- Headline -->
+    <div class="vsl-headline">Compare AZOS e MAG<br>numa única cotação</div>
+    <div class="vsl-sub">
+      Seguro de vida completo, aprovado digitalmente, sem exames médicos obrigatórios.<br>
+      Você escolhe a cobertura — nós cotamos nas duas seguradoras.
+    </div>
+
+    <!-- Seguradoras consultadas -->
+    <div class="seg-pill-row">
+      <span class="seg-pill">AZOS</span>
+      <span class="seg-pill">MAG</span>
+    </div>
+
+    <!-- Preço em destaque -->
+    <div class="vsl-preco-destaque">
+      <div class="preco">R$50<span style="font-size:1.1rem;font-weight:600">/mês</span></div>
+      <div class="preco-label">Orçamento mensal alvo — cobertura máxima para o seu perfil</div>
+    </div>
+
+    <!-- Benefícios -->
+    <div class="vsl-beneficios">
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">Cobertura para 30 doenças graves</div>
       </div>
-      <div>
-        <label for="nascimento">Data de nascimento</label>
-        <input id="nascimento" name="nascimento" type="text" required placeholder="DD/MM/AAAA">
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+            <circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+            <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">Proteção para toda a família</div>
+      </div>
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2"/>
+            <path d="M8 21h8M12 17v4"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">100% digital, sem sair de casa</div>
+      </div>
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">Aprovação imediata, sem exames</div>
+      </div>
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="1" x2="12" y2="23"/>
+            <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">Indenização por invalidez total</div>
+      </div>
+      <div class="vsl-beneficio">
+        <div class="vsl-beneficio-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+          </svg>
+        </div>
+        <div class="vsl-beneficio-texto">Comparativo lado a lado</div>
       </div>
     </div>
-    <div class="grid-2" style="margin-bottom:16px">
-      <div>
-        <label for="cpf">CPF</label>
-        <input id="cpf" name="cpf" type="text" placeholder="000.000.000-00">
+
+    <!-- Pergunta de escolha -->
+    <div class="vsl-pergunta">Qual proteção é mais importante para você?</div>
+
+    <div class="cobertura-cards">
+
+      <!-- Opção 1: Cobertura em Vida -->
+      <div class="cobertura-card" id="card-em_vida" onclick="selecionarCobertura('em_vida')">
+        <div class="cobertura-card-check" id="check-em_vida"></div>
+        <div class="cobertura-card-titulo">Proteção em Vida</div>
+        <div class="cobertura-card-desc">
+          Garanta renda e indenização enquanto você está vivo — em caso de doença grave,
+          invalidez ou internação hospitalar. O dinheiro vai direto para você.
+        </div>
+        <div class="cobertura-card-tags">
+          <span class="cobertura-tag">Doenças Graves</span>
+          <span class="cobertura-tag">Invalidez</span>
+          <span class="cobertura-tag verde">Internação</span>
+          <span class="cobertura-tag">Cirurgias</span>
+        </div>
       </div>
-      <div>
-        <label for="email">E-mail</label>
-        <input id="email" name="email" type="email" placeholder="joao@email.com">
+
+      <!-- Opção 2: Cobertura após a Morte -->
+      <div class="cobertura-card" id="card-apos_morte" onclick="selecionarCobertura('apos_morte')">
+        <div class="cobertura-card-check" id="check-apos_morte"></div>
+        <div class="cobertura-card-titulo">Proteção da Família</div>
+        <div class="cobertura-card-desc">
+          Deixe seus beneficiários protegidos financeiramente. Em caso de falecimento,
+          sua família recebe o capital segurado para manter o padrão de vida.
+        </div>
+        <div class="cobertura-card-tags">
+          <span class="cobertura-tag azul">Seguro de Vida</span>
+          <span class="cobertura-tag">Morte Acidental</span>
+          <span class="cobertura-tag verde">MAG Vida Inteira</span>
+        </div>
       </div>
+
+      <!-- Opção 3: Mix -->
+      <div class="cobertura-card" id="card-mix" onclick="selecionarCobertura('mix')">
+        <div class="cobertura-card-check" id="check-mix"></div>
+        <div class="cobertura-card-titulo">Proteção Completa</div>
+        <div class="cobertura-card-desc">
+          O melhor dos dois mundos — metade do orçamento protege você hoje,
+          metade protege sua família amanhã. Cobertura total no AZOS + MAG.
+        </div>
+        <div class="cobertura-card-tags">
+          <span class="cobertura-tag">Doenças Graves</span>
+          <span class="cobertura-tag azul">Seguro de Vida</span>
+          <span class="cobertura-tag verde">Invalidez</span>
+          <span class="cobertura-tag">+ Mais coberturas</span>
+        </div>
+      </div>
+
     </div>
-    <div class="grid-2" style="margin-bottom:16px">
-      <div>
-        <label for="telefone">Telefone / WhatsApp</label>
-        <input id="telefone" name="telefone" type="text" placeholder="(11) 99999-9999">
-      </div>
-      <div>
-        <label for="renda">Renda mensal (R$)</label>
-        <input id="renda" name="renda" type="number" value="5000" min="1000" step="500">
-      </div>
-    </div>
-    <div class="grid-3" style="margin-bottom:24px">
-      <div>
-        <label for="sexo">Sexo</label>
-        <select id="sexo" name="sexo">
-          <option value="M">Masculino</option>
-          <option value="F">Feminino</option>
-        </select>
-      </div>
-      <div>
-        <label for="profissao">Profissão</label>
-        <input id="profissao" name="profissao" type="text" value="Advogado" placeholder="Ex: Médico, Engenheiro...">
-      </div>
-      <div>
-        <label for="ocupacao">Ocupação</label>
-        <select id="ocupacao" name="ocupacao">
-          <option value="Profissional Liberal">Profissional Liberal</option>
-          <option value="Assalariado">Assalariado</option>
-          <option value="Empresário">Empresário</option>
-          <option value="Autônomo">Autônomo</option>
-          <option value="Aposentado">Aposentado</option>
-        </select>
-      </div>
-    </div>
-    <button type="submit" class="btn btn-primary">Cotar nas 3 seguradoras</button>
-  </form>
+
+    <button class="btn-cotar" id="btnAvancar" onclick="avancarParaForm()" disabled>
+      Continuar para cotação
+    </button>
+
+  </div>
 </div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TELA 1 — Formulário de cotação
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div id="tela-form" class="container" style="display:none">
+
+  <div id="badgeCobertura" style="margin-bottom:12px;text-align:center"></div>
+
+  <div class="card">
+    <div class="card-title">Dados para cotação</div>
+    <form id="formCotar">
+      <input type="hidden" name="tipo_cobertura" id="tipoCoberturaInput"/>
+
+      <div class="sec-label">Cadastro</div>
+      <div class="aviso-box">
+        Necessário para gerar a cotação nos portais das seguradoras.
+        Validação rígida da MAG: CPF válido e nome só com letras.
+      </div>
+      <div class="grid">
+        <div>
+          <label class="fl">CPF</label>
+          <input type="text" name="cpf" required placeholder="Apenas números: 52998224725"/>
+        </div>
+        <div>
+          <label class="fl">Telefone (DDD + número)</label>
+          <input type="text" name="telefone" required placeholder="Ex: 11999999999"/>
+        </div>
+        <div class="full">
+          <label class="fl">E-mail</label>
+          <input type="text" name="email" required placeholder="email@exemplo.com"/>
+        </div>
+        <div>
+          <label class="fl">Estado civil</label>
+          <select name="estado_civil" style="width:100%;padding:10px 13px;border:1.5px solid #dde1ea;border-radius:8px;font-size:.9rem;">
+            <option value="Solteira/o">Solteira/o</option>
+            <option value="Casada/o">Casada/o</option>
+            <option value="Viúva/o">Viúva/o</option>
+            <option value="Divorciada/o">Divorciada/o</option>
+            <option value="União estável">União estável</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sec-label" style="margin-top:20px">Endereço residencial</div>
+      <div class="grid">
+        <div>
+          <label class="fl">CEP (somente números)</label>
+          <input type="text" name="cep" required placeholder="Ex: 01310100" maxlength="8" minlength="8" pattern="\d{8}" title="CEP deve ter 8 números"/>
+        </div>
+        <div>
+          <label class="fl">Número</label>
+          <input type="text" name="numero" required placeholder="Ex: 100"/>
+        </div>
+        <div>
+          <label class="fl">Complemento (opcional)</label>
+          <input type="text" name="complemento" placeholder="Apto, sala, etc."/>
+        </div>
+      </div>
+
+      <div class="sec-label">Identificação</div>
+      <div class="grid">
+        <div class="full">
+          <label class="fl">Nome completo</label>
+          <input type="text" name="nome" required placeholder="Ex: João da Silva"/>
+        </div>
+        <div>
+          <label class="fl">Data de nascimento</label>
+          <input type="text" name="nascimento" required placeholder="DD/MM/AAAA" maxlength="10"/>
+        </div>
+        <div>
+          <label class="fl">Profissão</label>
+          <input type="text" name="profissao" placeholder="Ex: Empresário, Médico"/>
+        </div>
+      </div>
+
+      <div class="sec-label">Informações físicas</div>
+      <div class="grid3">
+        <div>
+          <label class="fl">Altura (cm)</label>
+          <input type="number" name="altura" value="175" min="100" max="250"/>
+        </div>
+        <div>
+          <label class="fl">Peso (kg)</label>
+          <input type="number" name="peso" value="80" min="30" max="300"/>
+        </div>
+        <div>
+          <label class="fl">Renda mensal (R$)</label>
+          <input type="text" name="renda_mensal" required placeholder="Ex: 10.000"/>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:16px">
+        <div>
+          <label class="fl">Sexo</label>
+          <div class="radio-row">
+            <label><input type="radio" name="sexo" value="M" checked/> Masculino</label>
+            <label><input type="radio" name="sexo" value="F"/> Feminino</label>
+          </div>
+        </div>
+        <div>
+          <label class="fl">Fumante nos últimos 24 meses?</label>
+          <div class="radio-row">
+            <label><input type="radio" name="fumante" value="nao" checked/> Não</label>
+            <label><input type="radio" name="fumante" value="sim"/> Sim</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="sec-label">Riscos de vida</div>
+      <div class="aviso-box">
+        Estas perguntas fazem parte da declaração obrigatória da seguradora. Responda com precisão.
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Pratica ou praticou esportes radicais (paraquedismo, alpinismo, mergulho, motocross, etc.)?</div>
+        <div class="toggle-group">
+          <input type="radio" name="pratica_esporte_radical" id="er_sim" value="sim"/>
+          <label for="er_sim">Sim</label>
+          <input type="radio" name="pratica_esporte_radical" id="er_nao" value="nao" checked/>
+          <label for="er_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">É piloto de avião, helicóptero ou ultraleve?</div>
+        <div class="toggle-group">
+          <input type="radio" name="pilota_aviao" id="pa_sim" value="sim"/>
+          <label for="pa_sim">Sim</label>
+          <input type="radio" name="pilota_aviao" id="pa_nao" value="nao" checked/>
+          <label for="pa_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Viaja frequentemente para países com alto risco de saúde ou conflito armado?</div>
+        <div class="toggle-group">
+          <input type="radio" name="viaja_exterior" id="ve_sim" value="sim"/>
+          <label for="ve_sim">Sim</label>
+          <input type="radio" name="viaja_exterior" id="ve_nao" value="nao" checked/>
+          <label for="ve_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="sec-label">Condições de saúde</div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui alguma doença preexistente diagnosticada (ex: hipertensão, colesterol alto, etc.)?</div>
+        <div class="toggle-group">
+          <input type="radio" name="doenca_preexistente" id="dp_sim" value="sim"/>
+          <label for="dp_sim">Sim</label>
+          <input type="radio" name="doenca_preexistente" id="dp_nao" value="nao" checked/>
+          <label for="dp_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Foi internado ou passou por procedimento médico nos últimos 2 anos?</div>
+        <div class="toggle-group">
+          <input type="radio" name="internacao_2anos" id="int_sim" value="sim"/>
+          <label for="int_sim">Sim</label>
+          <input type="radio" name="internacao_2anos" id="int_nao" value="nao" checked/>
+          <label for="int_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Tem cirurgia programada ou indicada por médico?</div>
+        <div class="toggle-group">
+          <input type="radio" name="cirurgia_prevista" id="cp_sim" value="sim"/>
+          <label for="cp_sim">Sim</label>
+          <input type="radio" name="cirurgia_prevista" id="cp_nao" value="nao" checked/>
+          <label for="cp_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">IMC acima de 40 (obesidade grau III)?</div>
+        <div class="toggle-group">
+          <input type="radio" name="imc_acima_40" id="imc_sim" value="sim"/>
+          <label for="imc_sim">Sim</label>
+          <input type="radio" name="imc_acima_40" id="imc_nao" value="nao" checked/>
+          <label for="imc_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui diagnóstico de câncer ou tumor maligno?</div>
+        <div class="toggle-group">
+          <input type="radio" name="diagnostico_cancer" id="dc_sim" value="sim"/>
+          <label for="dc_sim">Sim</label>
+          <input type="radio" name="diagnostico_cancer" id="dc_nao" value="nao" checked/>
+          <label for="dc_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui diagnóstico de doença cardíaca, infarto ou AVC?</div>
+        <div class="toggle-group">
+          <input type="radio" name="diagnostico_cardio" id="dca_sim" value="sim"/>
+          <label for="dca_sim">Sim</label>
+          <input type="radio" name="diagnostico_cardio" id="dca_nao" value="nao" checked/>
+          <label for="dca_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui diagnóstico de diabetes?</div>
+        <div class="toggle-group">
+          <input type="radio" name="diagnostico_diabetes" id="dd_sim" value="sim"/>
+          <label for="dd_sim">Sim</label>
+          <input type="radio" name="diagnostico_diabetes" id="dd_nao" value="nao" checked/>
+          <label for="dd_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui diagnóstico de insuficiência renal ou doença nos rins?</div>
+        <div class="toggle-group">
+          <input type="radio" name="diagnostico_renal" id="dr_sim" value="sim"/>
+          <label for="dr_sim">Sim</label>
+          <input type="radio" name="diagnostico_renal" id="dr_nao" value="nao" checked/>
+          <label for="dr_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Possui diagnóstico de HIV/AIDS?</div>
+        <div class="toggle-group">
+          <input type="radio" name="diagnostico_hiv" id="dh_sim" value="sim"/>
+          <label for="dh_sim">Sim</label>
+          <input type="radio" name="diagnostico_hiv" id="dh_nao" value="nao" checked/>
+          <label for="dh_nao">Não</label>
+        </div>
+      </div>
+
+      <div class="pergunta-row">
+        <div class="pergunta-texto">Faz uso de drogas ilícitas ou entorpecentes?</div>
+        <div class="toggle-group">
+          <input type="radio" name="uso_drogas" id="ud_sim" value="sim"/>
+          <label for="ud_sim">Sim</label>
+          <input type="radio" name="uso_drogas" id="ud_nao" value="nao" checked/>
+          <label for="ud_nao">Não</label>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-cotar" id="btnCotar">
+        Gerar cotação AZOS + MAG
+      </button>
+    </form>
+  </div>
+
+  <!-- Resultado -->
+  <div class="card" id="resultado">
+    <div class="card-title">Resultado da cotação</div>
+    <div id="resConteudo"></div>
+  </div>
+</div>
+
+
+<!-- LOADER -->
+<div class="loader-overlay" id="loader">
+  <div class="spinner"></div>
+  <div class="loader-text" id="loaderText">Iniciando cotação...</div>
+  <div style="color:rgba(255,255,255,.45);font-size:.72rem;margin-top:8px;font-family:monospace" id="debugJobId"></div>
+</div>
+
+
 <script>
-function cpfValido(cpf) {
-  var d = cpf.replace(/\D/g, '');
-  if (d.length !== 11) return false;
-  if (/^(\d)\1+$/.test(d)) return false;
-  for (var i = 9; i <= 10; i++) {
-    var soma = 0;
-    for (var j = 0; j < i; j++) soma += parseInt(d[j]) * (i + 1 - j);
-    var r = (soma * 10) % 11;
-    if (r === 10) r = 0;
-    if (r !== parseInt(d[i])) return false;
-  }
-  return true;
+let tipoSelecionado = null;
+
+const LABELS_COBERTURA = {
+  em_vida:    'Proteção em Vida',
+  apos_morte: 'Proteção da Família',
+  mix:        'Proteção Completa',
+};
+
+function selecionarCobertura(tipo) {
+  tipoSelecionado = tipo;
+  ['em_vida', 'apos_morte', 'mix'].forEach(t => {
+    document.getElementById('card-' + t).classList.toggle('selecionado', t === tipo);
+  });
+  document.getElementById('btnAvancar').disabled = false;
 }
-function validarForm(form) {
-  var cpf = form.cpf.value.trim();
-  if (cpf && !cpfValido(cpf)) {
-    alert('CPF inválido. Use um CPF válido (a MAG verifica o checksum).');
-    form.cpf.focus();
-    return false;
+
+function avancarParaForm() {
+  if (!tipoSelecionado) return;
+  document.getElementById('tipoCoberturaInput').value = tipoSelecionado;
+  const cores = { em_vida: '#4f6ef7', apos_morte: '#059669', mix: '#7c3aed' };
+  document.getElementById('badgeCobertura').innerHTML =
+    `<span style="display:inline-block;background:${cores[tipoSelecionado]};color:#fff;
+      padding:6px 18px;border-radius:20px;font-size:.82rem;font-weight:700">
+      ${LABELS_COBERTURA[tipoSelecionado]}
+    </span>`;
+  document.getElementById('tela-vsl').style.display  = 'none';
+  document.getElementById('tela-form').style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function fmtBRL(v) {
+  if (v == null) return '—';
+  return 'R$ ' + Number(v).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+const LOADER_MSGS = [
+  'Abrindo portal Azos e fazendo login...',
+  'Azos: preenchendo dados pessoais...',
+  'Azos: selecionando coberturas e calibrando prêmio...',
+  'MAG: abrindo simulação Vida Inteira...',
+  'MAG: confirmando cotação...',
+  'Calculando comparativo final...',
+];
+let loaderIdx = 0;
+let loaderTimer;
+
+function startLoaderMsgs() {
+  loaderIdx = 0;
+  document.getElementById('loaderText').textContent = LOADER_MSGS[0];
+  loaderTimer = setInterval(() => {
+    loaderIdx = Math.min(loaderIdx + 1, LOADER_MSGS.length - 1);
+    document.getElementById('loaderText').textContent = LOADER_MSGS[loaderIdx];
+  }, 10000);
+}
+
+function stopLoaderMsgs() { clearInterval(loaderTimer); }
+
+document.getElementById('formCotar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('btnCotar');
+  btn.disabled = true;
+  document.getElementById('loader').classList.add('show');
+  startLoaderMsgs();
+
+  try {
+    const fd  = new FormData(e.target);
+    const res = await fetch('/cotar', { method: 'POST', body: fd });
+    if (!res.ok) throw new Error('Erro ao iniciar cotação (HTTP ' + res.status + ')');
+    const { job_id } = await res.json();
+    if (!job_id) throw new Error('Servidor não retornou job_id');
+
+    window._jobId = job_id;
+    window.location.hash = job_id;
+
+    const dbgEl = document.getElementById('debugJobId');
+    if (dbgEl) dbgEl.textContent = 'job_id: ' + job_id;
+
+    await pollJob(job_id);
+
+  } catch(err) {
+    stopLoaderMsgs();
+    document.getElementById('loader').classList.remove('show');
+    btn.disabled = false;
+    renderResultado({ erro: err.message });
   }
-  var nome = form.nome.value.trim();
-  if (!/^[A-Za-zÀ-ÿ\s'\-]+$/.test(nome) || nome.split(/\s+/).length < 2) {
-    alert('Nome inválido. Use apenas letras e ao menos nome + sobrenome (ex: João Silva). A MAG bloqueia números e caracteres especiais.');
-    form.nome.focus();
-    return false;
+});
+
+async function pollJob(jobId) {
+  const btn      = document.getElementById('btnCotar');
+  const INTERVAL = 3000;
+  const MAX_WAIT = 900000;   // 15 min: AZOS + MAG sequenciais podem demorar
+  const started  = Date.now();
+
+  return new Promise((resolve) => {
+    const timer = setInterval(async () => {
+      try {
+        const r    = await fetch('/status/' + jobId);
+        const data = await r.json();
+
+        if (data.msg) {
+          document.getElementById('loaderText').textContent = data.msg;
+          stopLoaderMsgs();
+        }
+
+        if (data.status === 'done') {
+          clearInterval(timer);
+          stopLoaderMsgs();
+          document.getElementById('loader').classList.remove('show');
+          btn.disabled = false;
+          renderResultado(data.result);
+          resolve();
+
+        } else if (data.status === 'error') {
+          clearInterval(timer);
+          stopLoaderMsgs();
+          document.getElementById('loader').classList.remove('show');
+          btn.disabled = false;
+          renderResultado({ erro: data.error || 'Erro desconhecido na automação.', ...(data.result||{}) });
+          resolve();
+
+        } else if (Date.now() - started > MAX_WAIT) {
+          clearInterval(timer);
+          stopLoaderMsgs();
+          document.getElementById('loader').classList.remove('show');
+          btn.disabled = false;
+          renderResultado({ erro: 'Tempo limite excedido. Tente novamente.' });
+          resolve();
+        }
+      } catch(err) {
+        console.warn('Polling error:', err);
+      }
+    }, INTERVAL);
+  });
+}
+
+function renderSegCard(label, data) {
+  if (!data) {
+    return `<div class="seg-card erro">
+      <div class="seg-nome">${label}</div>
+      <div class="seg-erro">Não retornou dados</div>
+    </div>`;
   }
-  var nasc = form.nascimento.value.trim();
-  var d = nasc.replace(/\D/g, '');
-  if (d.length !== 8) {
-    alert('Data de nascimento inválida. Use o formato DD/MM/AAAA.');
-    form.nascimento.focus();
-    return false;
+  const erro = data.erro && !data.premio_mensal;
+  if (erro) {
+    return `<div class="seg-card erro">
+      <div class="seg-nome">${label}</div>
+      <div class="seg-erro">${data.erro}</div>
+    </div>`;
   }
-  var dia = parseInt(d.substr(0,2)), mes = parseInt(d.substr(2,2)), ano = parseInt(d.substr(4));
-  var hoje = new Date();
-  var nascDate = new Date(ano, mes-1, dia);
-  var idade = hoje.getFullYear() - ano - ((hoje.getMonth() < mes-1) || (hoje.getMonth() === mes-1 && hoje.getDate() < dia) ? 1 : 0);
-  if (idade < 18 || idade > 80) {
-    alert('A idade deve estar entre 18 e 80 anos. Idade atual: ' + idade + '.');
-    form.nascimento.focus();
-    return false;
+  const detalhes = [];
+  if (label === 'AZOS' && data.selecoes && data.selecoes.length) {
+    detalhes.push(data.selecoes.map(s => `
+      <div class="cob-row">
+        <div>
+          <div class="cob-nome">${s.nome}</div>
+          ${s.motivo ? `<div class="cob-mot">${s.motivo}</div>` : ''}
+        </div>
+        <div class="cob-val">${fmtBRL(s.valor)}</div>
+      </div>
+    `).join(''));
   }
-  return true;
+  if (label === 'MAG') {
+    const cap = data.capital ? Number(data.capital).toLocaleString('pt-BR') : '—';
+    detalhes.push(`<div class="seg-detalhe">${data.produto || 'VIDA INTEIRA'} — capital R$ ${cap}</div>`);
+  }
+  return `<div class="seg-card ok">
+    <div class="seg-nome">${label}</div>
+    <div class="seg-premio">${fmtBRL(data.premio_mensal)}<span style="font-size:.85rem;font-weight:600;opacity:.7">/mês</span></div>
+    ${data.premio_anual ? `<div class="seg-anual">Anual: ${fmtBRL(data.premio_anual)}</div>` : ''}
+    ${detalhes.join('')}
+  </div>`;
+}
+
+function renderResultado(data) {
+  const box = document.getElementById('resultado');
+  const div = document.getElementById('resConteudo');
+  box.style.display = 'block';
+  box.scrollIntoView({ behavior: 'smooth' });
+
+  if (data.erro && !data.azos && !data.mag) {
+    div.innerHTML = `<div class="erro-box">&#9888; ${data.erro}</div>
+      <button class="btn-novo" onclick="novaCotacao()">Tentar novamente</button>`;
+    return;
+  }
+
+  const azosCard = renderSegCard('AZOS', data.azos);
+  const magCard  = renderSegCard('MAG',  data.mag);
+
+  div.innerHTML = `
+    <div class="seg-grid">
+      ${azosCard}
+      ${magCard}
+    </div>
+    <div class="res-divider"></div>
+    <div style="font-size:.82rem;color:#64748b;line-height:1.6">
+      Cotações geradas em tempo real nos portais oficiais.<br>
+      <strong>AZOS</strong> calibrada para R$50/mês com as coberturas recomendadas para o seu perfil.<br>
+      <strong>MAG Vida Inteira</strong> (CG 3082/3083) — capital fixo conforme o tipo de cobertura escolhido.
+    </div>
+    ${data.erro ? `<div class="erro-box" style="margin-top:12px">&#9888; ${data.erro}</div>` : ''}
+    <button class="btn-novo" onclick="novaCotacao()">Nova cotação</button>
+  `;
+}
+
+function novaCotacao() {
+  document.getElementById('resultado').style.display = 'none';
+  tipoSelecionado = null;
+  ['em_vida', 'apos_morte', 'mix'].forEach(t => {
+    document.getElementById('card-' + t).classList.remove('selecionado');
+  });
+  document.getElementById('btnAvancar').disabled = true;
+  document.getElementById('tela-form').style.display = 'none';
+  document.getElementById('tela-vsl').style.display  = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 </script>
-{% endblock %}
+</body>
+</html>

@@ -1,1026 +1,921 @@
-"""Automação AZOS — portal corretores (novo UI 2025)."""
-from __future__ import annotations
-import os, re, asyncio, tempfile
+"""
+Automação Azos — fluxo completo com browser visível
+Fase 1: preenche dados pessoais → retorna coberturas disponíveis
+Fase 2: seleciona coberturas → preenche saúde/riscos → retorna cotação final
+"""
+import asyncio, os, uuid, tempfile
 from pathlib import Path
-from playwright.async_api import Page
-from .base import novo_browser, fechar_browser, clicar_continuar, extrair_valor_monetario, resolver_captcha
-from models import Cobertura, ResultadoFase1, ResultadoCotacao, SondagemPreco
 
-URL_LOGIN = "https://corretores.azos.com.br/login"
-URL_SIM   = "https://contratacao.azos.com.br/simulacao/dados-pessoais"
-EMAIL = os.getenv("AZOS_EMAIL", "")
-SENHA = os.getenv("AZOS_SENHA", "")
+AZOS_URL_LOGIN = "https://corretores.azos.com.br/login"
+AZOS_URL_SIM   = "https://contratacao.azos.com.br/simulacao/dados-pessoais"
+AZOS_EMAIL = os.getenv("AZOS_EMAIL", "grsouza93ip@gmail.com")
+AZOS_SENHA = os.getenv("AZOS_SENHA", "1964Dns#*")
 
+# Pasta temporária cross-platform (/tmp no Linux/Mac, %TEMP% no Windows)
 _TMP = Path(tempfile.gettempdir())
 
-# Sessões abertas aguardando fase 2
-_SESSOES: dict[str, dict] = {}
+# Modo headless: True em produção (servidor), False para debug local
+_HEADLESS = os.getenv("HEADLESS", "true").lower() not in ("false", "0", "no")
+
+# Sessões ativas: session_id → {playwright, browser, page}
+_sessoes: dict = {}
 
 
-# ─── FASE 1: login + dados pessoais + coleta de coberturas ───────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+# FASE 1 — Preenche dados pessoais e retorna coberturas disponíveis
+# ──────────────────────────────────────────────────────────────────────────────
+async def fase1_dados_pessoais(cliente: dict) -> dict:
+    """
+    Abre browser VISÍVEL, faz login e preenche o Step 1 (dados pessoais).
+    Avança para Step 2 (coberturas) e extrai as opções disponíveis.
 
-async def fase1_coletar_coberturas(dados: dict, headless: bool = True) -> ResultadoFase1:
-    pw, browser, ctx, page = await novo_browser(headless)
-    session_id = dados.get("session_id", "azos-" + str(id(page)))
+    Retorna:
+    {
+      "session_id": str,
+      "coberturas": [{"id": str, "nome": str, "descricao": str, "valor_max": float, "valor_min": float}],
+      "erro": str | None
+    }
+    """
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+
+    session_id = str(uuid.uuid4())
+    resultado  = {"session_id": session_id, "coberturas": [], "erro": None}
+
     try:
-        print(f"[azos] iniciando fase1 session={session_id}", flush=True)
-
-        # Login
-        await page.goto(URL_LOGIN, wait_until="domcontentloaded", timeout=60_000)
-        await page.wait_for_selector('input[name="email"]', timeout=45_000)
-        await page.fill('input[name="email"]', EMAIL)
-        await page.fill('input[name="password"]', SENHA)
-        await resolver_captcha(page)
-        await page.click('button[type="submit"]')
-        # Aguarda navegar para fora da página de login E para dentro do domínio contratacao/corretores
-        for _ in range(90):
-            await page.wait_for_timeout(1000)
-            url = page.url
-            # Sucesso: chegou em dashboard, simulacao ou qualquer rota autenticada
-            if any(k in url for k in ("dashboard", "simulacao", "cotacao", "proposta", "contratacao.azos")):
-                break
-            # Falha explícita: voltou para login com erro
-            if "login" in url and _ > 10:
-                # Captura erros visíveis na página para diagnóstico
-                diag = await page.evaluate("""() => {
-                    const errs = [...document.querySelectorAll('[role="alert"], .text-red-500, [class*="error"], [class*="invalid"]')]
-                        .map(e => (e.innerText||'').trim().substring(0,80)).filter(Boolean);
-                    const body = (document.body.innerText || '').substring(0, 200);
-                    const recaptcha = !!document.querySelector('iframe[src*="recaptcha"], .g-recaptcha');
-                    return {errs: errs.slice(0,3), body, recaptcha};
-                }""")
-                raise Exception(f"Login AZOS rejeitado — url={url}, recaptcha_visivel={diag.get('recaptcha')}, errs={diag.get('errs')}")
-        else:
-            raise Exception(f"Login AZOS timeout (90s) — URL: {page.url}")
-        print(f"[azos] login ok → {page.url}", flush=True)
-
-        # Navegação para simulação
-        await page.goto(URL_SIM, wait_until="domcontentloaded", timeout=30_000)
-        await page.wait_for_timeout(2000)
-        print(f"[azos] dados-pessoais → {page.url}", flush=True)
-
-        # "Novo cliente" — tenta silenciosamente
-        for sel in ['button:has-text("Novo cliente")', 'text="Novo cliente"', '[data-testid*="new"]']:
-            try:
-                el = page.locator(sel).first
-                if await el.count() and await el.is_visible():
-                    await el.click()
-                    await page.wait_for_timeout(600)
-                    break
-            except Exception:
-                pass
-
-        # Preenche dados pessoais
-        await _preencher_dados_pessoais(page, dados)
-        await page.wait_for_timeout(500)
-
-        # Avança para coberturas
-        cont = page.locator('button:has-text("Continuar")').first
-        try:
-            await cont.click(timeout=5_000)
-        except Exception:
-            await cont.click(force=True)
-        await page.wait_for_timeout(2000)
-
-        for _ in range(15):
-            if "dados-pessoais" not in page.url:
-                break
-            await page.wait_for_timeout(1000)
-        else:
-            # Diagnóstico: estado do form quando bloqueado
-            diag = await page.evaluate("""() => {
-                const cont = [...document.querySelectorAll('button')]
-                    .find(b => /continuar/i.test(b.textContent||''));
-                const errs = [...document.querySelectorAll('[role="alert"], .text-red-500, [class*="error"]')]
-                    .map(e => (e.innerText||'').trim().substring(0,60)).filter(Boolean);
-                const fields = {};
-                for (const inp of document.querySelectorAll('input[name]')) {
-                    fields[inp.name] = (inp.value||'').substring(0,30);
-                }
-                const profBtn = document.querySelector('button[name="professionId"]');
-                return {
-                    cont_disabled: cont ? cont.disabled || cont.getAttribute('aria-disabled')==='true' : null,
-                    cont_exists: !!cont,
-                    errs: errs.slice(0,3),
-                    fields,
-                    prof_text: profBtn ? (profBtn.innerText||'').substring(0,40) : 'no-btn',
-                };
-            }""")
-            raise Exception(f"AZOS bloqueado dados-pessoais — cont_disabled={diag.get('cont_disabled')}, prof={diag.get('prof_text')}, errs={diag.get('errs')}, fields={diag.get('fields')}")
-        print(f"[azos] pós-continuar → {page.url}", flush=True)
-
-        await page.wait_for_load_state("domcontentloaded", timeout=20_000)
-        await page.wait_for_timeout(1500)
-
-        # Aguarda React renderizar os toggles de cobertura (novo UI: button.min-w-11)
-        try:
-            await page.wait_for_selector(
-                'button.min-w-11.min-h-11[data-slot="tooltip-trigger"]',
-                timeout=10_000,
-            )
-        except Exception:
-            # Fallback UI antigo
-            try:
-                await page.wait_for_selector('button[role="switch"]', timeout=5_000)
-            except Exception:
-                pass
-
-        coberturas = await _extrair_coberturas(page)
-        print(f"[azos] {len(coberturas)} coberturas extraídas | url={page.url}", flush=True)
-        if not coberturas:
-            raise Exception(f"AZOS 0 coberturas extraídas — url={page.url}")
-
-        _SESSOES[session_id] = {
-            "pw": pw, "browser": browser, "ctx": ctx, "page": page,
-            "dados": dados,
-        }
-
-        return ResultadoFase1(
-            seguradora="azos",
-            ok=True,
-            coberturas=coberturas,
-            session_id=session_id,
+        print(f"[azos][fase1] iniciando session_id={session_id} headless={_HEADLESS}", flush=True)
+        pw      = await async_playwright().start()
+        _launch_args = [
+            "--window-size=1280,900",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--single-process",
+            # Esconde fingerprint de automação (navigator.webdriver, etc.)
+            "--disable-blink-features=AutomationControlled",
+        ]
+        print(f"[azos][fase1] lançando chromium...", flush=True)
+        browser = await pw.chromium.launch(headless=_HEADLESS, slow_mo=0 if _HEADLESS else 120,
+                                           args=_launch_args)
+        # Context com user-agent real + init script anti-detecção
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
         )
+        await context.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            Object.defineProperty(navigator, 'plugins',   {get: () => [1, 2, 3, 4, 5]});
+            Object.defineProperty(navigator, 'languages', {get: () => ['pt-BR', 'pt', 'en-US']});
+            window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+        """)
+        page = await context.new_page()
+        print(f"[azos][fase1] browser ok — navegando para login: {AZOS_URL_LOGIN}", flush=True)
 
-    except Exception as e:
-        print(f"[azos] ERRO fase1: {e}", flush=True)
-        await fechar_browser(pw, browser)
-        return ResultadoFase1(seguradora="azos", ok=False, erro=str(e))
+        # ── Login ────────────────────────────────────────────────────────
+        print(f"[azos][fase1] goto login (domcontentloaded)...", flush=True)
+        await page.goto(AZOS_URL_LOGIN, wait_until="domcontentloaded", timeout=45_000)
+        await page.wait_for_timeout(2_000)
+        print(f"[azos][fase1] login page carregada, url={page.url}", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_01_login.png"), full_page=False)
 
+        # Espera o campo email ficar visível antes de preencher
+        await page.wait_for_selector('input[name="email"]', timeout=15_000)
+        await page.fill('input[name="email"]',    AZOS_EMAIL)
+        await page.fill('input[name="password"]', AZOS_SENHA)
+        print(f"[azos][fase1] credenciais preenchidas, clicando submit...", flush=True)
+        await page.click('button[type="submit"]')
+        await page.wait_for_timeout(1_000)
 
-async def _preencher_dados_pessoais(page: Page, d: dict):
-    # Nome
-    nome = d.get("nome", "")
-    if nome:
-        await page.locator('input[name="fullName"]').fill(nome)
-        await page.keyboard.press("Tab")
-        await page.wait_for_timeout(200)
+        print(f"[azos][fase1] aguardando redirect para dashboard...", flush=True)
+        await page.wait_for_url("**/dashboard**", timeout=30_000)
+        print(f"[azos][fase1] login ok — url={page.url}", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_02_dashboard.png"), full_page=False)
 
-    # Data de nascimento (campo mascarado dd/mm/aaaa)
-    nasc = d.get("nascimento", "")
-    if nasc:
-        digits = re.sub(r"\D", "", nasc)
-        nasc_inp = page.locator('input[name="birthDate"]').first
-        await nasc_inp.click()
-        await nasc_inp.press_sequentially(digits, delay=80)
-        await page.keyboard.press("Tab")
-        await page.wait_for_timeout(200)
+        # ── Simulação ────────────────────────────────────────────────────
+        print(f"[azos][fase1] navegando para simulação: {AZOS_URL_SIM}", flush=True)
+        await page.goto(AZOS_URL_SIM, wait_until="domcontentloaded", timeout=30_000)
+        await page.wait_for_timeout(2_000)
+        print(f"[azos][fase1] simulação carregada, url={page.url}", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_03_simulacao.png"), full_page=False)
 
-    # Altura em cm (ex: "175")
-    try:
-        h_inp = page.locator('input[name="height"]').first
-        if await h_inp.count() and await h_inp.is_visible():
-            await h_inp.click()
-            await h_inp.press_sequentially("175", delay=50)
-            await page.keyboard.press("Tab")
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
+        await page.locator('text="Novo cliente"').click()
+        await page.wait_for_timeout(800)
+        print(f"[azos][fase1] clicou 'Novo cliente'", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_04_novo_cliente.png"), full_page=False)
 
-    # Peso em kg
-    try:
-        w_inp = page.locator('input[name="weight"]').first
-        if await w_inp.count() and await w_inp.is_visible():
-            await w_inp.fill("70")
-            await page.keyboard.press("Tab")
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
+        # ── Dados pessoais ───────────────────────────────────────────────
+        print(f"[azos][fase1] preenchendo dados pessoais...", flush=True)
+        await _preencher_dados(page, cliente)
+        print(f"[azos][fase1] dados pessoais preenchidos", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_05_dados.png"), full_page=False)
 
-    # Profissão — Radix UI cmdk: trigger + busca + clique na opção (com retry se falhar)
-    profissao_busca = d.get("profissao", "Advogado")
+        # ── Avança para coberturas ────────────────────────────────────────
+        print(f"[azos][fase1] clicando Continuar...", flush=True)
+        await page.locator('button:has-text("Continuar")').click()
+        await page.wait_for_timeout(4_000)
+        await page.wait_for_load_state("domcontentloaded", timeout=20_000)
+        print(f"[azos][fase1] avançou para coberturas, url={page.url}", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_06_coberturas.png"), full_page=False)
 
-    async def _tentar_selecionar_profissao(termo: str) -> bool:
-        prof_btn = page.locator('button[name="professionId"]').first
-        if not await prof_btn.count() or not await prof_btn.is_visible():
-            print(f"[azos] prof_btn não encontrado/visível", flush=True)
-            return False
-        await prof_btn.click(force=True)
-        await page.wait_for_timeout(1500)  # tempo extra pro Radix dialog abrir
+        # ── Extrai coberturas ─────────────────────────────────────────────
+        coberturas = await _extrair_coberturas(page)
+        resultado["coberturas"] = coberturas
+        print(f"[azos][fase1] coberturas extraídas: {len(coberturas)} itens", flush=True)
+
+        # Guarda sessão aberta para Fase 2
+        _sessoes[session_id] = {"pw": pw, "browser": browser, "context": context, "page": page}
+        print(f"[azos][fase1] sessão salva, retornando resultado", flush=True)
+
+    except PWTimeout as e:
+        msg = f"Timeout: {str(e)[:200]}"
+        print(f"[azos][fase1] ERRO PWTimeout: {msg}", flush=True)
+        resultado["erro"] = msg
         try:
-            await page.wait_for_selector('input[cmdk-input]', state='visible', timeout=10_000)
-        except Exception as e:
-            print(f"[azos] cmdk-input não apareceu: {e}", flush=True)
-            try:
-                await page.screenshot(path="/tmp/azos_cmdk_fail.png", full_page=True)
-            except Exception:
-                pass
-            return False
-        prof_inp = page.locator('input[cmdk-input]').first
-        if not await prof_inp.count():
-            return False
-        await prof_inp.click()
-        await page.wait_for_timeout(200)
-        # Limpa input (caso retry herdou texto anterior)
-        try:
-            await prof_inp.fill("")
-            await page.wait_for_timeout(200)
+            await page.screenshot(path=str(_TMP / "azos_debug_timeout.png"), full_page=False)
         except Exception:
-            await page.keyboard.press("Control+a")
-            await page.keyboard.press("Delete")
-        # press_sequentially dispara keydown/keypress/input — cmdk filtra ao input event
-        await prof_inp.press_sequentially(termo, delay=80)
-        await page.wait_for_timeout(1500)
-
-        # Conta quantas opções estão visíveis
-        opt_count = await page.evaluate("""() => {
-            const opts = document.querySelectorAll('[cmdk-item][role="option"], [role="option"], [cmdk-list] [cmdk-item]');
-            return opts.length;
-        }""")
-        print(f"[azos] cmdk opções após digitar '{termo}': {opt_count}", flush=True)
-
-        if opt_count == 0:
-            # Salva screenshot pra debug
-            try:
-                await page.screenshot(path="/tmp/azos_cmdk_fail.png", full_page=True)
-                html = await page.content()
-                with open("/tmp/azos_cmdk_fail.html", "w") as f:
-                    f.write(html)
-            except Exception:
-                pass
-            return False
-
-        # Tenta vários seletores de opção
-        for sel in [
-            '[cmdk-item][role="option"]:not([data-disabled="true"])',
-            '[cmdk-item][role="option"]',
-            '[role="option"]',
-            '[cmdk-list] [cmdk-item]',
-        ]:
-            opt = page.locator(sel).first
-            if await opt.count():
-                try:
-                    await opt.click()
-                    await page.wait_for_timeout(500)
-                    return True
-                except Exception as e:
-                    print(f"[azos] click opt seletor {sel} falhou: {e}", flush=True)
-                    continue
-
-        # Fallback: ArrowDown + Enter
-        await page.keyboard.press("ArrowDown")
-        await page.wait_for_timeout(200)
-        await page.keyboard.press("Enter")
-        await page.wait_for_timeout(400)
-        return True
-
-    async def _profissao_selecionada() -> bool:
-        return await page.evaluate("""() => {
-            const b = document.querySelector('button[name="professionId"]');
-            if (!b) return false;
-            const txt = (b.innerText || '').trim();
-            // Placeholder contém 'Digite' ou 'Profissão exercida'; valor real não tem essa frase
-            return !/digite\\s*aqui|profissão exercida atualmente|selecione/i.test(txt) && txt.length > 3;
-        }""")
-
-    try:
-        # Tenta termo original, depois variações progressivamente mais curtas, depois fallback Advogado
-        termos = [profissao_busca]
-        # Variações: primeiras 4 letras (busca parcial), e fallback Advogado
-        if len(profissao_busca) > 5:
-            termos.append(profissao_busca[:5])
-        if profissao_busca.lower() not in ("advogado", "advogada"):
-            termos.append("Advogado")
-
-        for termo in termos:
-            await _tentar_selecionar_profissao(termo)
-            await page.wait_for_timeout(400)
-            if await _profissao_selecionada():
-                print(f"[azos] profissão selecionada com termo '{termo}'", flush=True)
-                break
-            # Fecha dialog antes do próximo retry
-            try:
-                await page.keyboard.press("Escape")
-                await page.wait_for_timeout(400)
-            except Exception:
-                pass
+            pass
     except Exception as e:
-        print(f"[azos] erro selecionando profissão: {e}", flush=True)
-    await page.wait_for_timeout(300)
-
-    # Renda mensal
-    renda_val = d.get("renda_mensal", "5000")
-    try:
-        renda_int = int(float(str(renda_val).replace(",", ".").replace(" ", "")))
-    except Exception:
-        renda_int = 5000
-    try:
-        renda_inp = page.locator('input[name="monthlyIncome"]').first
-        if await renda_inp.count() and await renda_inp.is_visible():
-            await renda_inp.click(click_count=3)
-            await renda_inp.fill(str(renda_int))
-            await page.keyboard.press("Tab")
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
-
-    # Gênero: labels com input[name="gender"]
-    sexo = d.get("sexo", "M")
-    sexo_idx = 1 if sexo.upper() in ("M", "MASCULINO") else 0
-    try:
-        lbl = page.locator('label:has(input[name="gender"])').nth(sexo_idx)
-        if await lbl.count():
-            await lbl.click()
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
-
-    # Fumante: primeiro label = Não fumante
-    try:
-        lbl_smoke = page.locator('label:has(input[name="isSmoker"])').first
-        if await lbl_smoke.count():
-            await lbl_smoke.click()
-            await page.wait_for_timeout(200)
-    except Exception:
-        pass
-
-
-async def _preencher_selects(page: Page, d: dict):
-    mapeamentos = [
-        ('select[name="gender"], [aria-label*="sexo" i]',         d.get("sexo", "M")),
-        ('select[name="marital"], [aria-label*="estado civil" i]', d.get("estado_civil", "")),
-        ('input[name="income"], input[placeholder*="renda" i]',    d.get("renda_mensal", "5000")),
-    ]
-    for sel, val in mapeamentos:
-        if not val:
-            continue
+        msg = str(e)[:300]
+        print(f"[azos][fase1] ERRO Exception: {msg}", flush=True)
+        resultado["erro"] = msg
         try:
-            el = page.locator(sel).first
-            if not await el.count():
-                continue
-            tag = await el.evaluate("el => el.tagName.toLowerCase()")
-            if tag == "select":
-                await el.select_option(label=str(val))
-            else:
-                await el.fill(str(val))
-            await page.wait_for_timeout(150)
+            await page.screenshot(path=str(_TMP / "azos_debug_exception.png"), full_page=False)
         except Exception:
             pass
 
+    return resultado
 
-# ─── Extrai coberturas (novo UI 2025: toggle bg-black/bg-primary) ─────────────
 
-async def _extrair_coberturas(page: Page) -> list[Cobertura]:
+async def _ler_premio_coberturas(page) -> float | None:
+    """Lê o prêmio MENSAL estimado da tela de coberturas.
+    Feito em Python puro para evitar qualquer problema de parsing JS/Chromium.
+    """
+    import re
+    try:
+        txt = await page.inner_text("body")
+    except Exception as e:
+        print(f"[azos][adj] erro ao ler texto da pagina: {e}", flush=True)
+        return None
+
+    try:
+        # Prioridade 1: "R$ 50,60/mês" na mesma linha
+        m = re.search(r'R\$\s*([\d.]+),([\d]{2})\s*/\s*m[eê]s', txt, re.IGNORECASE)
+        if m:
+            val = float(m.group(1).replace('.', '') + '.' + m.group(2))
+            if 5 < val < 2000:
+                print(f"[azos][adj] premio mensal lido: R${val:.2f}", flush=True)
+                return val
+
+        # Prioridade 2: linha com preço imediatamente antes de "/mês" (texto separado por newline)
+        linhas = txt.split('\n')
+        for i, linha in enumerate(linhas):
+            if re.search(r'm[eê]s', linha, re.IGNORECASE):
+                for candidato in [linha, linhas[i - 1] if i > 0 else '']:
+                    m2 = re.search(r'R\$\s*([\d.]+),([\d]{2})', candidato)
+                    if m2:
+                        val = float(m2.group(1).replace('.', '') + '.' + m2.group(2))
+                        if 5 < val < 2000:
+                            print(f"[azos][adj] premio mensal lido: R${val:.2f}", flush=True)
+                            return val
+
+        # Fallback: todos os preços entre R$5 e R$1000 (exclui anuais)
+        todos = [
+            float(m.group(1).replace('.', '') + '.' + m.group(2))
+            for m in re.finditer(r'R\$\s*([\d.]+),([\d]{2})', txt)
+        ]
+        mensais = [p for p in todos if 5 < p < 1000]
+        if mensais:
+            val = max(mensais)
+            print(f"[azos][adj] premio mensal lido (fallback): R${val:.2f}", flush=True)
+            return val
+
+        return None
+    except Exception as e:
+        print(f"[azos][adj] erro ao parsear premio: {e}", flush=True)
+        return None
+
+
+async def _continuar_habilitado(page) -> bool:
+    """Retorna True se o botão Continuar/Ver cotação está clicável (não desabilitado)."""
+    try:
+        return await page.evaluate("""() => {
+            const textos = ['ver cotação', 'continuar', 'próximo', 'avançar', 'calcular', 'ver cota'];
+            const candidatos = [
+                ...document.querySelectorAll('button'),
+                ...document.querySelectorAll('[role="button"]'),
+                ...document.querySelectorAll('a[class*="btn"], a[class*="button"]'),
+            ];
+            for (const btn of candidatos) {
+                const t = (btn.innerText || btn.textContent || '').trim().toLowerCase();
+                if (!textos.some(k => t.includes(k))) continue;
+                // Verifica disabled por atributo, aria, ou CSS
+                if (btn.disabled) return false;
+                if (btn.getAttribute('aria-disabled') === 'true') return false;
+                const style = window.getComputedStyle(btn);
+                if (style.pointerEvents === 'none') return false;
+                if (parseFloat(style.opacity) < 0.4) return false;
+                return true;  // encontrou e está habilitado
+            }
+            // Botão não encontrado — assume habilitado para não bloquear o fluxo
+            return true;
+        }""")
+    except Exception:
+        return True  # em caso de erro, não bloqueia
+
+
+async def _ler_limites_slider(page, nome: str) -> dict:
+    """Lê aria-valuemin/max/now do slider da cobertura a partir do DOM."""
+    nome_curto = nome[:30]
+    try:
+        result = await page.evaluate("""(nome) => {
+            const sliders = [...document.querySelectorAll('[role="slider"]')];
+            for (const thumb of sliders) {
+                let anc = thumb;
+                for (let i = 0; i < 15; i++) {
+                    anc = anc.parentElement;
+                    if (!anc) break;
+                    if (anc.textContent.includes(nome)) {
+                        return {
+                            min: parseFloat(thumb.getAttribute('aria-valuemin') || '0'),
+                            max: parseFloat(thumb.getAttribute('aria-valuemax') || '9999999'),
+                            now: parseFloat(thumb.getAttribute('aria-valuenow') || '0'),
+                        };
+                    }
+                }
+            }
+            // Fallback: input[type="range"]
+            const inputs = [...document.querySelectorAll('input[type="range"]')];
+            for (const inp of inputs) {
+                let anc = inp;
+                for (let i = 0; i < 15; i++) {
+                    anc = anc.parentElement;
+                    if (!anc) break;
+                    if (anc.textContent.includes(nome)) {
+                        return {
+                            min: parseFloat(inp.min || '0'),
+                            max: parseFloat(inp.max || '9999999'),
+                            now: parseFloat(inp.value || '0'),
+                        };
+                    }
+                }
+            }
+            return null;
+        }""", nome_curto)
+        return result or {}
+    except Exception:
+        return {}
+
+
+async def _desligar_cobertura(page, nome: str):
+    """Desativa o switch de uma cobertura se estiver ON."""
+    nome_curto = nome[:30]
+    try:
+        switch = page.locator(f'header:has(h3:has-text("{nome_curto}")) button[role="switch"]')
+        if not await switch.count():
+            switch = page.locator(f'*:has(h3:has-text("{nome_curto}")) button[role="switch"]')
+        if await switch.count():
+            if await switch.first.get_attribute("aria-checked") == "true":
+                await switch.first.click(force=True)
+                await page.wait_for_timeout(600)
+                print(f"[azos][adj] desligou '{nome_curto}'", flush=True)
+    except Exception as e:
+        print(f"[azos][adj] erro desligar '{nome_curto}': {e}", flush=True)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FASE 2 — Seleciona coberturas, preenche saúde/riscos, retorna cotação final
+# ──────────────────────────────────────────────────────────────────────────────
+async def fase2_selecionar_coberturas(session_id: str, selecoes: list[dict],
+                                       saude: dict | None = None,
+                                       coberturas_limits: dict | None = None) -> dict:
+    """
+    selecoes = [{"nome": str, "valor": float}, ...]
+    saude = {
+        "pratica_esporte_radical": bool,
+        "pilota_aviao": bool,
+        "viaja_exterior": bool,
+        "doenca_preexistente": bool,
+        "internacao_2anos": bool,
+        "cirurgia_prevista": bool,
+        "imc_acima_40": bool,
+        "diagnostico_cancer": bool,
+        "diagnostico_cardio": bool,
+        "diagnostico_diabetes": bool,
+        "diagnostico_renal": bool,
+        "diagnostico_hiv": bool,
+        "uso_drogas": bool,
+    }
+    Retorna: {"premio_mensal": float, "premio_anual": float, "detalhes": str, "erro": None}
+    """
+    from playwright.async_api import TimeoutError as PWTimeout
+
+    resultado = {"premio_mensal": None, "premio_anual": None, "detalhes": "",
+                 "erro": None, "selecoes": []}
+
+    sessao = _sessoes.get(session_id)
+    if not sessao:
+        resultado["erro"] = "Sessão não encontrada ou expirada"
+        print(f"[azos][fase2] sessão {session_id} não encontrada", flush=True)
+        return resultado
+
+    page = sessao["page"]
+    saude = saude or {}
+    print(f"[azos][fase2] iniciando, session_id={session_id}, url={page.url}", flush=True)
+
+    try:
+        # ── Esconde chat popup permanentemente via CSS ────────────────────
+        # O popup do copiloto cobre o botão Continuar e precisa sumir para sempre
+        await page.add_style_tag(content="""
+            [class*='chat'], [class*='copilot'], [class*='widget'],
+            [class*='Chat'], [class*='Copilot'], [class*='Widget'],
+            iframe[src*='chat'], iframe[src*='copilot'],
+            div[style*='z-index: 9'], div[style*='z-index:9'] {
+                display: none !important;
+                pointer-events: none !important;
+            }
+        """)
+        await page.wait_for_timeout(300)
+
+        # ── Seleciona cada cobertura ─────────────────────────────────────
+        # Primeiro: reseta TODOS os switches para OFF (força ciclo de estado React)
+        print(f"[azos][fase2] resetando switches para garantir estado fresco...", flush=True)
+        await page.evaluate("""() => {
+            document.querySelectorAll('button[role="switch"][aria-checked="true"]').forEach(sw => {
+                sw.click();
+            });
+        }""")
+        await page.wait_for_timeout(1_000)
+
+        print(f"[azos][fase2] selecionando coberturas: {[s['nome'] for s in selecoes]}", flush=True)
+        for sel in selecoes:
+            await _selecionar_cobertura(page, sel["nome"], sel.get("valor", 0))
+        print(f"[azos][fase2] coberturas selecionadas", flush=True)
+        await page.screenshot(path=str(_TMP / "azos_debug_f2_01_coberturas.png"), full_page=False)
+
+        # ── Loop inteligente: calibra coberturas até R$50 e Continuar habilitado ──
+        BUDGET     = 50.0
+        TOLERANCIA = 3.5   # aceita R$46,50–R$53,50
+        limits     = coberturas_limits or {}
+        ativas     = list(selecoes)   # cópia mutável das coberturas selecionadas
+        _caso4_prev_vals: tuple | None = None   # detecta estagnação no Caso 4
+
+        for adj_iter in range(12):
+            await page.wait_for_timeout(1_500)
+
+            premio     = await _ler_premio_coberturas(page)
+            habilitado = await _continuar_habilitado(page)
+            p_str      = f"R${premio:.2f}" if premio is not None else "N/A"
+            print(f"[azos][adj] ══ iter={adj_iter} premio={p_str} "
+                  f"continuar={'OK' if habilitado else 'BLOQUEADO'}", flush=True)
+
+            # Caso 1 — Convergiu: prêmio dentro da margem e botão habilitado
+            if habilitado and premio is not None and abs(premio - BUDGET) <= TOLERANCIA:
+                print(f"[azos][adj] convergia! {p_str} — avancando", flush=True)
+                selecoes = ativas
+                break
+
+            # Caso 2 — Prêmio ok mas Continuar bloqueado
+            # React não reconheceu o estado → recicla switches (off→on) e re-aplica sliders
+            if premio is not None and abs(premio - BUDGET) <= TOLERANCIA and not habilitado:
+                print(f"[azos][adj] premio ok mas continuar bloqueado → reciclando switches", flush=True)
+                await page.evaluate("""() => {
+                    document.querySelectorAll('button[role="switch"][aria-checked="true"]')
+                        .forEach(sw => sw.click());
+                }""")
+                await page.wait_for_timeout(800)
+                for sel in ativas:
+                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+                await page.wait_for_timeout(600)
+                continue
+
+            # Caso 3 — Prêmio alto demais → escala para baixo
+            if premio is not None and premio > BUDGET + TOLERANCIA:
+                ratio = BUDGET / premio
+                novas = []
+                todas_no_min = True
+                for sel in ativas:
+                    lim   = limits.get(sel["nome"], {})
+                    v_min = float(lim.get("valor_min") or 50_000)
+                    v_max = float(lim.get("valor_max") or 5_000_000)
+                    # Lê mínimo real do DOM (mais confiável que metadado de fase1)
+                    dom   = await _ler_limites_slider(page, sel["nome"])
+                    if dom.get("min"):
+                        v_min = max(v_min, dom["min"])
+                    if dom.get("max"):
+                        v_max = min(v_max, dom["max"])
+                    novo_v = round(sel["valor"] * ratio / 1_000) * 1_000
+                    novo_v = int(max(v_min, min(v_max, novo_v)))
+                    if novo_v > v_min:
+                        todas_no_min = False
+                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v}", flush=True)
+                    novas.append({**sel, "valor": novo_v})
+
+                # Sub-caso: todas no mínimo e ainda caro
+                if todas_no_min:
+                    if len(ativas) > 1:
+                        mais_cara = max(
+                            ativas,
+                            key=lambda s: float(limits.get(s["nome"], {}).get("valor_min") or 0)
+                        )
+                        print(f"[azos][adj] todas no min + caro → desligando '{mais_cara['nome'][:25]}'", flush=True)
+                        await _desligar_cobertura(page, mais_cara["nome"])
+                        ativas = [s for s in ativas if s["nome"] != mais_cara["nome"]]
+                    else:
+                        # Única cobertura no mínimo e ainda cara
+                        # Tenta trocar para "Morte acidental" se ainda não estiver usando
+                        # (taxa 0.050 → menor mínimo real no Azos)
+                        nome_unico = ativas[0]["nome"].lower()
+                        nomes_disp = list(limits.keys()) if limits else []
+                        nome_morte = next(
+                            (n for n in nomes_disp if "morte acidental" in n.lower()), None
+                        )
+                        nome_inv = next(
+                            (n for n in nomes_disp if "invalidez total por acidente" in n.lower()), None
+                        )
+                        alternativa = None
+                        if nome_morte and "morte acidental" not in nome_unico:
+                            alternativa = nome_morte
+                        elif nome_inv and "invalidez total por acidente" not in nome_unico:
+                            alternativa = nome_inv
+                        if alternativa:
+                            print(f"[azos][adj] unica cob cara → trocando para '{alternativa[:30]}'", flush=True)
+                            await _desligar_cobertura(page, ativas[0]["nome"])
+                            novo_cap = max(50_000, min(5_000_000,
+                                int(round(BUDGET / 0.050 * 1_000 / 1_000) * 1_000)))
+                            ativas = [{"nome": alternativa, "valor": novo_cap}]
+                            await _selecionar_cobertura(page, alternativa, novo_cap)
+                            await page.wait_for_timeout(800)
+                        else:
+                            # Sem alternativa — aceita o prêmio do mínimo
+                            print(f"[azos][adj] cobertura unica no min → aceita {p_str}", flush=True)
+                            selecoes = ativas
+                            break
+                else:
+                    for sel in novas:
+                        await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+                    ativas = novas
+
+                await page.screenshot(path=str(_TMP / f"azos_debug_adj_{adj_iter:02d}.png"))
+                continue
+
+            # Caso 4 — Continuar bloqueado (prêmio baixo/nulo ou inputs não atualizaram React)
+            if not habilitado:
+                cur_vals = tuple(s["valor"] for s in ativas)
+                if _caso4_prev_vals == cur_vals:
+                    # Valores idênticos em 2 iterações seguidas → inputs disabled não respondem.
+                    # Sai do loop e deixa o mecanismo de force-click do loop externo agir.
+                    print(f"[azos][adj] Caso4 sem progresso (inputs disabled) → saindo do loop adj", flush=True)
+                    selecoes = ativas
+                    break
+                _caso4_prev_vals = cur_vals
+
+                print(f"[azos][adj] continuar bloqueado + premio baixo → forcando minimos DOM", flush=True)
+                novas = []
+                for sel in ativas:
+                    dom   = await _ler_limites_slider(page, sel["nome"])
+                    v_min = max(
+                        float(limits.get(sel["nome"], {}).get("valor_min") or 50_000),
+                        dom.get("min", 0)
+                    )
+                    novo_v = int(max(sel["valor"], v_min))
+                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v} (dom_min={dom.get('min',0):.0f})", flush=True)
+                    novas.append({**sel, "valor": novo_v})
+                for sel in novas:
+                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+                ativas = novas
+                continue
+
+            # Caso 5 — Prêmio abaixo do alvo e botão habilitado → escala para cima
+            if premio is not None and premio < BUDGET - TOLERANCIA and habilitado:
+                ratio = BUDGET / premio
+                novas = []
+                for sel in ativas:
+                    lim   = limits.get(sel["nome"], {})
+                    v_max = float(lim.get("valor_max") or 5_000_000)
+                    dom   = await _ler_limites_slider(page, sel["nome"])
+                    if dom.get("max"):
+                        v_max = min(v_max, dom["max"])
+                    novo_v = round(sel["valor"] * ratio / 1_000) * 1_000
+                    novo_v = int(min(v_max, novo_v))
+                    print(f"[azos][adj]   {sel['nome'][:25]}: {sel['valor']}→{novo_v}", flush=True)
+                    novas.append({**sel, "valor": novo_v})
+                for sel in novas:
+                    await _selecionar_cobertura(page, sel["nome"], sel["valor"])
+                ativas = novas
+                continue
+
+        else:
+            # Esgotou iterações — usa o que estiver disponível e segue em frente
+            print(f"[azos][adj] max iteracoes — seguindo com estado atual", flush=True)
+            selecoes = ativas
+
+        # ── Para AQUI: blend só precisa da cotação, não da proposta ─────
+        print(f"[azos][fase2] calibração finalizada — capturando prêmio final", flush=True)
+        await page.wait_for_timeout(1_200)
+        await page.screenshot(path=str(_TMP / "azos_cotacao_final.png"), full_page=False)
+
+        premio_final = await _ler_premio_coberturas(page)
+        if premio_final is None:
+            texto = await page.inner_text("body")
+            premio_final = _extrair_premio_mensal(texto)
+            resultado["premio_anual"] = _extrair_premio_anual(texto)
+        resultado["premio_mensal"] = premio_final
+        if not resultado.get("premio_anual") and premio_final:
+            resultado["premio_anual"] = round(premio_final * 12, 2)
+        resultado["selecoes"] = selecoes
+        try:
+            texto = await page.inner_text("body")
+            resultado["detalhes"] = texto[:3000]
+        except Exception:
+            pass
+        print(f"[azos][fase2] premio_mensal={resultado['premio_mensal']} "
+              f"selecoes={[s['nome'][:25] for s in selecoes]}", flush=True)
+
+    except PWTimeout as e:
+        msg = f"Timeout: {str(e)[:200]}"
+        print(f"[azos][fase2] ERRO PWTimeout: {msg}", flush=True)
+        resultado["erro"] = msg
+        try:
+            await page.screenshot(path=str(_TMP / "azos_debug_f2_timeout.png"), full_page=False)
+        except Exception:
+            pass
+    except Exception as e:
+        msg = str(e)[:300]
+        print(f"[azos][fase2] ERRO Exception: {msg}", flush=True)
+        resultado["erro"] = msg
+        try:
+            await page.screenshot(path=str(_TMP / "azos_debug_f2_exception.png"), full_page=False)
+        except Exception:
+            pass
+    finally:
+        print(f"[azos][fase2] finalizando, resultado={resultado.get('erro') or 'ok'}", flush=True)
+        # Blend para na cotação → fecha browser imediatamente para liberar RAM (Railway tem pouco).
+        try:
+            await sessao["browser"].close()
+        except Exception:
+            pass
+        try:
+            await sessao["pw"].stop()
+        except Exception:
+            pass
+        _sessoes.pop(session_id, None)
+
+    return resultado
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers internos
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _preencher_dados(page, c: dict):
+    # Nome
+    await page.locator('input[name="fullName"]').click()
+    await page.locator('input[name="fullName"]').type(c["nome"], delay=50)
+
+    # Nascimento
+    nasc = c["nascimento"].replace("/", "").replace("-", "")
+    await page.locator('input[name="birthDate"]').click()
+    await page.locator('input[name="birthDate"]').type(nasc, delay=40)
+
+    # Altura
+    altura = str(c.get("altura", "175")).replace(".", "")
+    await page.locator('input[name="height"]').click()
+    await page.locator('input[name="height"]').type(altura, delay=40)
+
+    # Peso
+    peso = str(c.get("peso", "80")).replace(",", ".")
+    await page.locator('input[name="weight"]').click()
+    await page.locator('input[name="weight"]').type(peso, delay=40)
+
+    # Renda
+    renda = str(c.get("renda_mensal", "0")).replace(".", "").replace(",", "").replace("R$", "").strip()
+    await page.locator('input[name="monthlyIncome"]').click()
+    await page.locator('input[name="monthlyIncome"]').type(renda, delay=40)
+
+    # Profissão — dialog Radix UI
+    await page.locator('button[name="professionId"]').click()
+    await page.wait_for_timeout(1_200)
+    search = page.locator('[role="dialog"] input').first
+    await search.type(c.get("profissao", "Empresário")[:6], delay=80)
+    await page.wait_for_timeout(1_500)
+    await page.locator('[role="dialog"]').locator('button, li, [role="option"]').first.click()
+    await page.wait_for_timeout(800)
+
+    # Sexo
+    if c.get("sexo", "M") == "F":
+        await page.locator('label:has-text("feminino")').click()
+    else:
+        await page.locator('label:has-text("masculino")').click()
+    await page.wait_for_timeout(300)
+
+    # Fumante
+    labels = await page.locator('label').all()
+    alvo   = "Sim" if c.get("fumante") else "Não"
+    for lb in labels:
+        if (await lb.inner_text()).strip() == alvo:
+            await lb.click()
+            break
+    await page.wait_for_timeout(400)
+
+
+async def _extrair_coberturas(page) -> list:
+    """Extrai coberturas da página Azos."""
     coberturas = []
     try:
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(2_000)
         raw = await page.evaluate("""() => {
             const result = [];
-            const seen = new Set();
-
-            function lerMinMax(container) {
-                // Tenta ler min/max do input de capital dentro do card da cobertura
-                const inp = container.querySelector(
-                    'input[type="tel"], input[type="number"], input[name*="capital"], input[name*="valor"]'
-                );
-                let vMin = 50000, vMax = 5000000;
-                if (inp) {
-                    const minA = parseFloat(inp.getAttribute('min') || '0');
-                    const maxA = parseFloat(inp.getAttribute('max') || '0');
-                    if (minA > 0) vMin = minA;
-                    if (maxA > 0) vMax = maxA;
-                }
-                return { vMin, vMax };
-            }
-
-            // Novo UI 2025: toggle buttons min-w-11 min-h-11 data-slot="tooltip-trigger"
-            const toggles = document.querySelectorAll(
-                'button.min-w-11.min-h-11[data-slot="tooltip-trigger"]'
-            );
-            toggles.forEach(btn => {
-                let container = btn.parentElement;
-                for (let i = 0; i < 8; i++) {
-                    if (!container) break;
-                    const h3 = container.querySelector('h3');
-                    if (h3) {
-                        const nome = h3.innerText.trim();
-                        if (!nome || nome.length < 3 || seen.has(nome)) {
-                            container = container.parentElement;
-                            continue;
-                        }
-                        seen.add(nome);
-                        const descEl = container.querySelector('p');
-                        const cls = btn.className || '';
-                        const ativo = cls.includes('bg-primary') && !cls.includes('bg-black');
-                        const { vMin, vMax } = lerMinMax(container);
-                        result.push({
-                            nome: nome.substring(0, 80),
-                            descricao: descEl ? descEl.innerText.trim().substring(0, 150) : '',
-                            ativo,
-                            valor_min: vMin,
-                            valor_max: vMax,
-                        });
-                        break;
-                    }
-                    container = container.parentElement;
-                }
-            });
-
-            // Fallback UI antigo: header + switch
-            if (result.length === 0) {
-                document.querySelectorAll('header').forEach(header => {
-                    const sw = header.querySelector('button[role="switch"]');
-                    const h3 = header.querySelector('h3');
-                    if (!sw || !h3) return;
-                    const nome = h3.innerText.trim();
-                    if (!nome || nome.length < 3 || seen.has(nome)) return;
-                    seen.add(nome);
-                    const container = header.parentElement;
-                    const descEl = container ? container.querySelector('p') : null;
-                    const { vMin, vMax } = lerMinMax(container || header);
-                    result.push({
-                        nome: nome.substring(0, 80),
-                        descricao: descEl ? descEl.innerText.trim().substring(0, 150) : '',
-                        ativo: sw.getAttribute('aria-checked') === 'true',
-                        valor_min: vMin,
-                        valor_max: vMax,
-                    });
+            document.querySelectorAll('header').forEach(header => {
+                const sw  = header.querySelector('button[role="switch"]');
+                const h3  = header.querySelector('h3');
+                if (!sw || !h3) return;
+                const nome = h3.innerText.trim();
+                if (!nome || nome.length < 3) return;
+                let container = header.parentElement;
+                const desc_el = container ? container.querySelector('p, [class*="desc"]') : null;
+                const desc    = desc_el ? desc_el.innerText.trim().substring(0, 150) : '';
+                const inp = container ? container.querySelector(
+                    'input[type="range"], input[type="number"], input[type="tel"]'
+                ) : null;
+                result.push({
+                    nome:      nome.substring(0, 80),
+                    descricao: desc,
+                    ativo:     sw.getAttribute('aria-checked') === 'true',
+                    valor_max: inp ? parseFloat(inp.max  || 0) : 500000,
+                    valor_min: inp ? parseFloat(inp.min  || 0) : 10000,
                 });
-            }
+            });
             return result;
         }""")
 
-        vistos: set[str] = set()
+        vistos = set()
         for item in raw:
             nome = item.get("nome", "").strip()
             if nome and nome not in vistos and nome != "Indisponível" and len(nome) > 3:
                 vistos.add(nome)
-                v_min = item.get("valor_min") or 50_000
-                v_max = item.get("valor_max") or 1_000_000
-                coberturas.append(Cobertura(
-                    id=f"azos_{re.sub(r'[^a-z0-9]', '_', nome.lower()[:30])}",
-                    nome=nome,
-                    descricao=item.get("descricao", ""),
-                    valor_min=float(v_min),
-                    valor_max=float(v_max),
-                    premio_referencia=0.0,
-                    seguradora="azos",
-                ))
+                if not item["valor_max"]: item["valor_max"] = 1_000_000
+                if not item["valor_min"]: item["valor_min"] = 50_000
+                coberturas.append(item)
 
     except Exception as e:
-        print(f"[azos] erro ao extrair coberturas: {e}", flush=True)
-
+        coberturas = [{"nome": "Erro ao extrair coberturas", "descricao": str(e),
+                       "valor_max": 0, "valor_min": 0, "ativo": False}]
     return coberturas
 
 
-# ─── FASE 2: seleciona coberturas e finaliza cotação ─────────────────────────
-
-async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[ResultadoCotacao]:
-    """selecoes = [{"nome": str, "valor": float}, ...]"""
-    sessao = _SESSOES.get(session_id)
-    if not sessao:
-        return [ResultadoCotacao(
-            seguradora="azos", cobertura_nome="", valor_capital=0,
-            premio_mensal=0, erro="Sessão expirada — reinicie a coleta",
-        )]
-
-    page: Page = sessao["page"]
-    dados_cliente = sessao.get("dados", {})
-    resultados: list[ResultadoCotacao] = []
-
-    try:
-        # Esconde popup do chat que pode bloquear botões
-        await page.add_style_tag(content="""
-            [class*='chat'],[class*='copilot'],[class*='widget'],
-            [class*='Chat'],[class*='Copilot'],[class*='Widget'],
-            iframe[src*='chat'],iframe[src*='copilot'] {
-                display:none!important;pointer-events:none!important;
-            }
-        """)
-
-        # Garante que está na página de coberturas
-        if "coberturas" not in page.url and "simulacao" not in page.url:
-            await page.goto(
-                "https://contratacao.azos.com.br/simulacao/coberturas",
-                wait_until="domcontentloaded", timeout=20_000,
-            )
-            await page.wait_for_timeout(1500)
-
-        # Reseta: desliga todas coberturas selecionadas (novo UI + legacy)
-        await page.evaluate("""() => {
-            document.querySelectorAll(
-                'button.min-w-11.min-h-11.bg-primary[data-slot="tooltip-trigger"]'
-            ).forEach(btn => btn.click());
-            document.querySelectorAll(
-                'button[role="switch"][aria-checked="true"]'
-            ).forEach(sw => sw.click());
-        }""")
-        await page.wait_for_timeout(800)
-
-        # Seleciona cada cobertura
-        for sel in selecoes:
-            await _selecionar_cobertura(page, sel["nome"], float(sel["valor"]))
-
-        await page.wait_for_timeout(1000)
-
-        # Avança — "Ir para o Resumo" ou "Continuar"
-        await _clicar_continuar_azos(page)
-        await page.wait_for_timeout(3000)
-
-        # Loop principal: DPS → cadastro → resultado
-        premio = await _percorrer_fluxo(page, dados_cliente)
-
-        for sel in selecoes:
-            resultados.append(ResultadoCotacao(
-                seguradora="azos",
-                cobertura_nome=sel["nome"],
-                valor_capital=float(sel["valor"]),
-                premio_mensal=premio / max(len(selecoes), 1) if premio else 0,
-                link_proposta=page.url,
-            ))
-
-    except Exception as e:
-        print(f"[azos] ERRO fase2: {e}", flush=True)
-        resultados.append(ResultadoCotacao(
-            seguradora="azos", cobertura_nome="Erro", valor_capital=0,
-            premio_mensal=0, erro=str(e),
-        ))
-    finally:
-        sess = _SESSOES.pop(session_id, None)
-        if sess:
-            await fechar_browser(sess["pw"], sess["browser"])
-
-    return resultados
-
-
-async def sondar_preco_morte(session_id: str, capital: int = 100_000) -> SondagemPreco:
-    """
-    Sonda o prêmio mensal para a cobertura Morte (Seguro de vida).
-
-    Estratégia: reusa fase2_finalizar (que já está testada e captura o prêmio
-    no fim do fluxo via _extrair_premio_mensal). O lado ruim é que percorre
-    DPS + cadastro até gerar uma cotação. O lado bom é que funciona.
-    """
-    nome = "Seguro de vida"
-    try:
-        cotacoes = await fase2_finalizar(session_id, [{"nome": nome, "valor": capital}])
-        if not cotacoes:
-            return SondagemPreco(
-                linha_id="morte_qualquer_causa", cobertura_nome=nome,
-                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-                erro="Nenhuma cotação retornada",
-            )
-        c = cotacoes[0]
-        if c.erro or c.premio_mensal <= 0:
-            return SondagemPreco(
-                linha_id="morte_qualquer_causa", cobertura_nome=nome,
-                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-                erro=(c.erro or "Prêmio zero")[:120],
-            )
-        preco_1k = round(c.premio_mensal / (capital / 1000.0), 4)
-        return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome=nome,
-            capital_sondado=float(capital),
-            premio_mensal=float(c.premio_mensal),
-            preco_por_1000=preco_1k,
-        )
-    except Exception as e:
-        return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome=nome,
-            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-            erro=str(e)[:120],
-        )
-
-
-async def _sondar_preco_morte_via_preview(session_id: str, capital: int = 100_000) -> SondagemPreco:
-    """
-    [DESATIVADA] Tentativa anterior — capturar preview sem avançar.
-    Não funcionou: AZOS calcula prêmio só no Resumo, painel direito fica R$ 0,00.
-    """
-    sessao = _SESSOES.get(session_id)
-    if not sessao:
-        return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
-            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-            erro="Sessão expirada",
-        )
-    page: Page = sessao["page"]
-    try:
-        # Esconde popup chat que pode interferir
-        await page.add_style_tag(content="""
-            [class*='chat'],[class*='copilot'],[class*='widget'],
-            [class*='Chat'],[class*='Copilot'],[class*='Widget'],
-            iframe[src*='chat'],iframe[src*='copilot'] {
-                display:none!important;pointer-events:none!important;
-            }
-        """)
-
-        # Garante página de coberturas
-        if "coberturas" not in page.url and "simulacao" not in page.url:
-            await page.goto(
-                "https://contratacao.azos.com.br/simulacao/coberturas",
-                wait_until="domcontentloaded", timeout=20_000,
-            )
-            await page.wait_for_timeout(1500)
-
-        # Reseta seleções prévias
-        await page.evaluate("""() => {
-            document.querySelectorAll(
-                'button.min-w-11.min-h-11.bg-primary[data-slot="tooltip-trigger"]'
-            ).forEach(btn => btn.click());
-            document.querySelectorAll(
-                'button[role="switch"][aria-checked="true"]'
-            ).forEach(sw => sw.click());
-        }""")
-        await page.wait_for_timeout(800)
-
-        # Seleciona Morte (Seguro de vida) com capital âncora
-        await _selecionar_cobertura(page, "Seguro de vida", float(capital))
-        await page.wait_for_timeout(2500)
-
-        # Confirma que o capital foi setado corretamente
-        capital_check = await page.evaluate("""(target) => {
-            const inputs = document.querySelectorAll('input[type="tel"], input[type="number"]');
-            const vals = [];
-            for (const inp of inputs) {
-                const raw = (inp.value || '').replace(/\\D/g, '');
-                const n = parseInt(raw, 10) || 0;
-                if (n > 0) vals.push(n);
-            }
-            return {target, vals};
-        }""", capital)
-        print(f"[azos] sondagem capital check: target={capital_check['target']} vals={capital_check['vals']}", flush=True)
-
-        # Salva screenshot/html pra debug
-        try:
-            await page.screenshot(path="/tmp/azos_sondagem.png", full_page=True)
-            html = await page.content()
-            with open("/tmp/azos_sondagem.html", "w") as f:
-                f.write(html)
-        except Exception:
-            pass
-
-        # Tenta capturar preço do painel direito (preview sem avançar)
-        premio_preview = await page.evaluate("""() => {
-            const txt = document.body.innerText || '';
-            // Procura padrões "R$ X.XXX,XX" perto de mês/mensal/total/prêmio
-            const patterns = [
-                /(?:total|prêmio|premio|mensal)[^\\n]{0,40}R\\$\\s*([\\d.]+,\\d{2})/gi,
-                /R\\$\\s*([\\d.]+,\\d{2})\\s*\\/?\\s*(?:mês|mes|mensal|por\\s*mês)/gi,
-            ];
-            const found = [];
-            for (const pat of patterns) {
-                const matches = [...txt.matchAll(pat)];
-                for (const m of matches) found.push(m[1]);
-            }
-            // Também retorna TODOS os valores R$ X,XX da página pra debug
-            const allRs = [];
-            for (const m of [...txt.matchAll(/R\\$\\s*([\\d.]+,\\d{2})/g)]) {
-                allRs.push(m[1]);
-            }
-            return {found, allRs: allRs.slice(0, 20)};
-        }""")
-        print(f"[azos] sondagem preview matches={premio_preview.get('found')} allR$={premio_preview.get('allRs')[:8]}", flush=True)
-        premio_preview = premio_preview.get('found', [])
-
-        premio_val: float | None = None
-        if premio_preview:
-            # Pega o menor valor encontrado (provavelmente o prêmio mensal)
-            vals = []
-            for v in premio_preview:
-                try:
-                    f = float(v.replace(".", "").replace(",", "."))
-                    if 5 <= f <= 5000:
-                        vals.append(f)
-                except Exception:
-                    pass
-            if vals:
-                premio_val = min(vals)
-                print(f"[azos] sondagem preview: R$ {premio_val:.2f}/mês para R$ {capital}", flush=True)
-
-        # Se preview não funcionou, avança para Resumo e captura lá
-        if premio_val is None:
-            await _clicar_continuar_azos(page)
-            await page.wait_for_timeout(4000)
-            txt = await page.inner_text("body")
-            premio_val = _extrair_premio_mensal(txt)
-            if premio_val:
-                print(f"[azos] sondagem via resumo: R$ {premio_val:.2f}/mês", flush=True)
-
-        if premio_val is None or premio_val <= 0:
-            return SondagemPreco(
-                linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
-                capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-                erro=f"Prêmio não capturado | url={page.url}",
-            )
-
-        preco_1k = round(premio_val / (capital / 1000.0), 4)
-        return SondagemPreco(
-            linha_id="morte_qualquer_causa",
-            cobertura_nome="Seguro de vida",
-            capital_sondado=float(capital),
-            premio_mensal=premio_val,
-            preco_por_1000=preco_1k,
-        )
-    except Exception as e:
-        print(f"[azos] erro sondagem morte: {e}", flush=True)
-        return SondagemPreco(
-            linha_id="morte_qualquer_causa", cobertura_nome="Seguro de vida",
-            capital_sondado=capital, premio_mensal=0.0, preco_por_1000=0.0,
-            erro=str(e)[:120],
-        )
-
-
-async def _percorrer_fluxo(page: Page, dados_cliente: dict) -> float | None:
-    """Avança por DPS → cadastro → resultado e retorna prêmio mensal."""
-    _saude_urls = ("dps", "saude", "health", "declaracao", "questionario")
-
-    for iteracao in range(60):
-        await page.wait_for_timeout(1500)
-        url = page.url
-
-        # Chegou ao resultado
-        if any(k in url for k in ["resultado", "proposta", "checkout", "pagamento", "sucesso", "proposta-enviada"]):
-            break
-
-        # Preenche DPS
-        if any(k in url for k in _saude_urls):
-            await _preencher_dps_completo(page, {})
-            await page.wait_for_timeout(2000)
-            if not any(k in page.url for k in _saude_urls):
-                continue
-
-        # Preenche cadastro
-        if "cadastro" in url:
-            await _preencher_cadastro(page, dados_cliente)
-            await page.wait_for_timeout(1000)
-            avancou = await _clicar_continuar_azos(page)
-            if not avancou:
-                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                await page.wait_for_timeout(500)
-                await _clicar_continuar_azos(page)
-            await page.wait_for_timeout(3000)
-            continue
-
-        # Avança etapas desconhecidas
-        avancou = await _clicar_continuar_azos(page)
-        if not avancou:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await page.wait_for_timeout(500)
-            avancou = await _clicar_continuar_azos(page)
-            if not avancou:
-                break
-        await page.wait_for_timeout(2000)
-
-    txt = await page.inner_text("body")
-    return _extrair_premio_mensal(txt)
-
-
-# ─── Selecionar cobertura (novo UI 2025) ─────────────────────────────────────
-
-async def _selecionar_cobertura(page: Page, nome: str, valor: float):
-    """Ativa toggle da cobertura e define valor via fill()."""
+async def _selecionar_cobertura(page, nome: str, valor: float):
+    """Ativa o toggle da cobertura e define o valor via simulação real de mouse/teclado."""
     nome_curto = nome[:30]
-    print(f"[azos] selecionando '{nome_curto}' valor={valor}", flush=True)
+    print(f"[azos][cob] selecionando '{nome_curto}' valor={valor}", flush=True)
     try:
-        toggle = None
-        for sel in [
-            f'div:has(h3:has-text("{nome_curto}")) button.min-w-11[data-slot="tooltip-trigger"]',
-            f'*:has(h3:has-text("{nome_curto}")) button.min-w-11',
-            f'*:has(h3:has-text("{nome_curto}")) button.bg-black',
-            f'header:has(h3:has-text("{nome_curto}")) button[role="switch"]',
-            f'*:has(h3:has-text("{nome_curto}")) button[role="switch"]',
-        ]:
-            candidate = page.locator(sel).first
-            if await candidate.count():
-                toggle = candidate
-                break
-
-        if not toggle:
-            print(f"[azos] toggle não encontrado: '{nome_curto}'", flush=True)
+        # ── 1. Localiza e clica o switch ─────────────────────────────────────
+        switch = page.locator(f'header:has(h3:has-text("{nome_curto}")) button[role="switch"]')
+        if not await switch.count():
+            switch = page.locator(f'*:has(h3:has-text("{nome_curto}")) button[role="switch"]')
+        if not await switch.count():
+            print(f"[azos][cob] switch nao encontrado: '{nome_curto}'", flush=True)
             return
 
-        await toggle.scroll_into_view_if_needed()
+        await switch.first.scroll_into_view_if_needed()
         await page.wait_for_timeout(400)
 
-        cls = await toggle.get_attribute("class") or ""
-        aria_checked = await toggle.get_attribute("aria-checked")
-        is_selected = ("bg-primary" in cls and "bg-black" not in cls) or aria_checked == "true"
+        checked = await switch.first.get_attribute("aria-checked")
+        print(f"[azos][cob] switch aria-checked={checked}", flush=True)
 
-        if not is_selected:
-            await toggle.click()
+        if checked != "true":
+            # Click normal (sem force) → React processa todos os eventos nativos
+            await switch.first.click()
             await page.wait_for_timeout(1000)
-            cls = await toggle.get_attribute("class") or ""
-            is_selected = "bg-primary" in cls and "bg-black" not in cls
-            if not is_selected:
-                bbox = await toggle.bounding_box()
+            checked = await switch.first.get_attribute("aria-checked")
+            print(f"[azos][cob] apos click, aria-checked={checked}", flush=True)
+
+            # Fallback: mouse.click por coordenada
+            if checked != "true":
+                bbox = await switch.first.bounding_box()
                 if bbox:
-                    await page.mouse.click(bbox["x"] + bbox["width"] / 2, bbox["y"] + bbox["height"] / 2)
+                    await page.mouse.click(
+                        bbox["x"] + bbox["width"] / 2,
+                        bbox["y"] + bbox["height"] / 2,
+                    )
                     await page.wait_for_timeout(1000)
+                    checked = await switch.first.get_attribute("aria-checked")
+                    print(f"[azos][cob] apos mouse.click, aria-checked={checked}", flush=True)
 
         if valor <= 0:
             return
 
-        # Input de valor: painel direito (novo UI) ou card direto (legado)
-        inp = None
-        try:
-            card = page.locator('div.border.border-neutral-100.p-4').filter(has_text=nome_curto).first
-            if await card.count():
-                inp_c = card.locator('input[type="tel"]').first
-                if await inp_c.count():
-                    inp = inp_c
-        except Exception:
-            pass
-
-        if not inp:
-            inp_all = page.locator('input[type="tel"]')
-            if await inp_all.count():
-                inp = inp_all.first
-
-        if not inp:
-            for sel in [
-                f'*:has(h3:has-text("{nome_curto}")) input[type="tel"]',
-                f'*:has(h3:has-text("{nome_curto}")) input[type="number"]',
-            ]:
-                c = page.locator(sel).first
-                if await c.count():
-                    inp = c
-                    break
-
-        if not inp:
-            print(f"[azos] input não encontrado: '{nome_curto}'", flush=True)
+        # ── 2. Localiza o input de valor dentro do mesmo card ─────────────────
+        # Usa :has() do Playwright para achar o input no container que tem o switch
+        for sel in [
+            f'*:has(> header:has(h3:has-text("{nome_curto}"))) input[type="tel"]',
+            f'*:has(h3:has-text("{nome_curto}")) input[type="tel"]',
+            f'*:has(h3:has-text("{nome_curto}")) input[type="number"]',
+            f'*:has(h3:has-text("{nome_curto}")) [role="slider"]',
+        ]:
+            inp = page.locator(sel).first
+            if await inp.count():
+                break
+        else:
+            print(f"[azos][cob] input de valor nao encontrado: '{nome_curto}'", flush=True)
             return
 
-        try:
-            await inp.wait_for(state="visible", timeout=5_000)
-        except Exception:
-            pass
+        await inp.scroll_into_view_if_needed()
 
-        # fill() define valor numérico bruto (site formata como moeda)
-        await inp.fill(str(int(valor)))
-        await page.wait_for_timeout(600)
-        print(f"[azos] valor definido via fill: {int(valor)}", flush=True)
+        # ── 3. Aguarda o input ser habilitado (até 5 s) ───────────────────────
+        try:
+            await inp.wait_for(state="enabled", timeout=5000)
+            print(f"[azos][cob] input habilitado", flush=True)
+        except Exception:
+            print(f"[azos][cob] input nao habilitou em 5s — tentando por coordenada", flush=True)
+
+        # ── 4. Clica no input ─────────────────────────────────────────────────
+        try:
+            await inp.click(timeout=2000)
+        except Exception:
+            # Playwright bloqueou (disabled/interceptado): click por coordenada
+            bbox = await inp.bounding_box()
+            if bbox:
+                await page.mouse.click(
+                    bbox["x"] + bbox["width"] / 2,
+                    bbox["y"] + bbox["height"] / 2,
+                )
+                print(f"[azos][cob] click por coordenada ({bbox['x']:.0f},{bbox['y']:.0f})", flush=True)
+
+        await page.wait_for_timeout(200)
+
+        # ── 5. Digita o valor (Ctrl+A → type → Tab) ───────────────────────────
+        await page.keyboard.press("Control+a")
+        await page.keyboard.type(str(int(valor)), delay=25)
+        await page.keyboard.press("Tab")
+        await page.wait_for_timeout(500)
+        print(f"[azos][cob] valor digitado: {int(valor)}", flush=True)
 
     except Exception as e:
-        print(f"[azos] ERRO selecionando '{nome_curto}': {e}", flush=True)
+        print(f"[azos][cob] ERRO em '{nome_curto}': {e}", flush=True)
 
 
-# ─── Botão avançar ────────────────────────────────────────────────────────────
+async def _preencher_dps_completo(page, saude: dict):
+    """
+    Preenche a DPS (Declaração Pessoal de Saúde) do Azos.
+    URL: /contratacao/dps
 
-async def _clicar_continuar_azos(page: Page) -> bool:
-    """Clica em 'Ir para o Resumo', 'Continuar', etc. Ignora botões disabled."""
-    seletores = [
-        'button:has-text("Ir para o Resumo")',
-        'button:has-text("Continuar")',
-        'button:has-text("Próximo")',
-        'button:has-text("Avançar")',
-        'button:has-text("Ver cotação")',
-        'button:has-text("Calcular")',
-        'button:has-text("Finalizar")',
-        'button:has-text("Confirmar")',
-        'button[type="submit"]',
-    ]
-    for sel in seletores:
-        try:
-            all_btns = page.locator(sel)
-            count = await all_btns.count()
-            if not count:
-                continue
-            for i in range(count):
-                btn = all_btns.nth(i)
-                try:
-                    if not await btn.is_visible():
-                        continue
-                    if await btn.get_attribute("disabled") is not None:
-                        continue
-                    if await btn.get_attribute("aria-disabled") == "true":
-                        continue
-                    await btn.click()
-                    return True
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    Estrutura real:
+    - Tela 0: vínculo profissional (radio buttons — seleciona opção empresário/dono)
+    - Telas seguintes: Sim/Não para doenças, estilo de vida, histórico
+    - Resposta padrão = "Não." (texto EXATO)
+    - Seção "estilo de vida": frequência de atividades — seleciona opção mais saudável
 
-    # Fallback por coordenadas JS
-    try:
-        coords = await page.evaluate("""() => {
-            const textos = ['Ir para o Resumo','Ver cotação','Continuar','Próximo','Avançar','Calcular','Finalizar','Confirmar'];
-            for (const txt of textos) {
-                const btns = [...document.querySelectorAll('button')].filter(b =>
-                    b.textContent.trim().includes(txt) && !b.disabled &&
-                    b.getAttribute('aria-disabled') !== 'true'
-                );
-                for (const btn of btns) {
-                    const r = btn.getBoundingClientRect();
-                    if (r.width > 0 && r.height > 0)
-                        return {x: r.left + r.width/2, y: r.top + r.height/2};
-                }
-            }
-            return null;
-        }""")
-        if coords:
-            await page.mouse.click(coords["x"], coords["y"])
-            return True
-    except Exception:
-        pass
-
-    return False
-
-
-# ─── DPS — Declaração Pessoal de Saúde ────────────────────────────────────────
-
-async def _preencher_dps_completo(page: Page, saude: dict):
-    """Loop 40 iterações respondendo perguntas de saúde até sair de /dps."""
+    Fica em loop até sair de /dps.
+    """
     _saude_urls = ("dps", "saude", "health", "declaracao", "questionario")
+
     print(f"[azos][dps] iniciando, url={page.url}", flush=True)
-
     for iteracao in range(40):
-        await page.wait_for_timeout(1200)
+        await page.wait_for_timeout(1_200)
 
-        url_atual = page.url
-        if not any(k in url_atual for k in _saude_urls):
-            print(f"[azos][dps] saindo (url sem dps): {url_atual}", flush=True)
+        url_dps_atual = page.url
+        if not any(k in url_dps_atual for k in _saude_urls):
+            print(f"[azos][dps] saindo do loop (url sem saude keyword): {url_dps_atual}", flush=True)
             break
 
-        texto = (await page.inner_text("body")).lower()
+        await page.screenshot(path=str(_TMP / f"azos_debug_dps_{iteracao:02d}.png"), full_page=True)
 
-        e_vinculo = any(k in texto for k in [
+        texto_pagina = (await page.inner_text("body")).lower()
+        # Extrai a pergunta atual (primeira linha não vazia que não seja menu)
+        linhas_pg = [l.strip() for l in texto_pagina.split("\n") if l.strip() and len(l.strip()) > 8]
+        pergunta_atual = linhas_pg[0][:120] if linhas_pg else ""
+        print(f"[azos][dps] iteracao={iteracao} url={url_dps_atual}", flush=True)
+        print(f"[azos][dps] pergunta='{pergunta_atual}'", flush=True)
+
+        # ── Detecta o tipo de tela ────────────────────────────────────────
+        # Tipo 0: vínculo profissional OU profissão manual (mesma lógica → seleciona opção mais saudável)
+        e_vinculo_prof = any(k in texto_pagina for k in [
             "vínculo profissional", "vinculo profissional",
-            "selecione o seu vínculo", "carteira assinada", "clt",
+            "selecione o seu vínculo", "selecione seu vínculo",
+            "carteira assinada", "clt",
             "sou dono e trabalho", "autonomo informal", "autônomo informal",
+            "sócio investidor", "socio investidor",
             "atividades manuais", "profissão envolve", "profissao envolve",
-            "somente atividades administrativas",
+            "envolve atividades", "somente atividades administrativas",
         ])
-        tem_nenhum = any(k in texto for k in [
+
+        # Tipo A: checkboxes com opção "nenhum/nenhuma" no final
+        tem_nenhum_desses = any(k in texto_pagina for k in [
             "nenhum desses", "nenhuma desses", "nenhuma delas",
             "nenhum delas", "nenhuma dessas", "nenhum dos anteriores",
             "nenhuma das anteriores", "selecione todas as opções",
-        ])
-        e_estilo = any(k in texto for k in [
-            "estilo de vida", "atividade física", "atividade fisica",
-            "exercício", "exercicio", "bebida alcoólica", "bebida alcoolica",
-            "álcool", "alcool", "cigarro", "tabaco", "frequência", "frequencia",
+            "selecione todas as opcoes",
         ])
 
-        async def _responder():
-            if e_vinculo:
+        # Tipo C: estilo de vida (frequência)
+        e_estilo_vida = any(k in texto_pagina for k in [
+            "estilo de vida", "atividade física", "atividade fisica",
+            "exercício", "exercicio", "sedentário", "sedentario",
+            "bebida alcoólica", "bebida alcoolica", "álcool", "alcool",
+            "cigarro", "tabaco", "fumo", "frequência", "frequencia",
+        ])
+
+        async def _selecionar_pelo_tipo():
+            if e_vinculo_prof:
                 return await _selecionar_vinculo_profissional(page)
-            elif tem_nenhum:
+            elif tem_nenhum_desses:
                 return await _clicar_nenhum_desses(page)
-            elif e_estilo:
+            elif e_estilo_vida:
                 return await _responder_estilo_vida(page)
             else:
                 return await _selecionar_nao_exato(page)
 
-        selecionou = await _responder()
-        print(f"[azos][dps] iter={iteracao} selecionou={selecionou} vinculo={e_vinculo} nenhum={tem_nenhum} estilo={e_estilo}", flush=True)
+        selecionou = await _selecionar_pelo_tipo()
 
+        print(f"[azos][dps] iteracao={iteracao} selecionou={selecionou} vinculo={e_vinculo_prof} nenhum={tem_nenhum_desses} estilo={e_estilo_vida}", flush=True)
+        if not selecionou:
+            await page.screenshot(path=str(_TMP / f"azos_debug_dps_stuck_{iteracao:02d}.png"), full_page=True)
+
+        # Scroll até o fim e aguarda o Radix UI processar o click (pode levar 1-2s)
         await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(1_500)
 
-        avancou = await _clicar_continuar_azos(page)
+        avancou = await _clicar_continuar(page)
+        print(f"[azos][dps] iteracao={iteracao} avancou={avancou}", flush=True)
         if not avancou:
-            await _responder()
-            await page.wait_for_timeout(2500)
-            avancou = await _clicar_continuar_azos(page)
+            # Botão ainda desabilitado: re-seleciona (Radix pode não ter reagido ao primeiro click)
+            print(f"[azos][dps] iteracao={iteracao} re-selecionando e aguardando...", flush=True)
+            await _selecionar_pelo_tipo()
+            await page.wait_for_timeout(2_500)
+            avancou = await _clicar_continuar(page)
             if not avancou:
+                # Última tentativa: clica via JS direto no botão (bypassa verificação disabled)
                 try:
                     await page.evaluate("""() => {
-                        const textos = ['Continuar','Próximo','Avançar','Ver cotação','Calcular'];
+                        const textos = ['Continuar','Próximo','Avançar','Ver cotação','Calcular','Confirmar'];
                         const btn = [...document.querySelectorAll('button')].find(b =>
-                            textos.some(t => b.textContent.trim().startsWith(t)) && !b.getAttribute('disabled')
+                            textos.some(t => b.textContent.trim().startsWith(t)) &&
+                            !b.getAttribute('disabled')
                         );
                         if (btn) btn.click();
                     }""")
-                    await page.wait_for_timeout(2000)
-                    avancou = page.url != url_atual
+                    await page.wait_for_timeout(2_000)
+                    avancou = page.url != url_dps_atual
                 except Exception:
                     pass
+                if not avancou:
+                    print(f"[azos][dps] iteracao={iteracao} nao conseguiu avançar após 3 tentativas, continuando...", flush=True)
+                    await page.screenshot(path=str(_TMP / f"azos_debug_dps_fail_{iteracao:02d}.png"), full_page=True)
+                    # Não quebra — continua o loop para tentar na próxima iteração
 
-        print(f"[azos][dps] iter={iteracao} avancou={avancou}", flush=True)
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(2_000)
 
         if not any(k in page.url for k in _saude_urls):
-            print(f"[azos][dps] saindo pós-continuar: {page.url}", flush=True)
+            print(f"[azos][dps] saindo do loop pós-continuar: {page.url}", flush=True)
             break
 
 
-async def _selecionar_vinculo_profissional(page: Page) -> bool:
+async def _selecionar_vinculo_profissional(page) -> bool:
+    """
+    Seleciona o vínculo profissional na primeira tela da DPS.
+    DOM real: label > button[role="radio"] + input[hidden] + p.body(texto)
+    Clica no label que contém texto correspondente ao perfil empresário.
+    """
     await _fechar_popup_chat(page)
     await page.wait_for_timeout(400)
 
+    # Ordem de preferência para perfil empresário / resposta administrativa
     preferencias = [
-        "mais de 15", "3 a 15", "Sou dono",
-        "Autonomo informal", "carteira assinada",
+        # Tela de vínculo profissional
+        "mais de 15",
+        "3 a 15",
+        "Sou dono",
+        "Autonomo informal",
+        "carteira assinada",
+        # Tela "Sua profissão envolve atividades manuais?"
         "Não, somente atividades administrativas",
-        "somente atividades administrativas", "Não",
+        "somente atividades administrativas",
+        "Não",
     ]
+
     for pref in preferencias:
         try:
+            # Tenta em labels primeiro
             el = page.locator("label").filter(has_text=pref).first
             if await el.count():
                 await el.click(force=True)
                 await page.wait_for_timeout(500)
+                print(f"[azos][vinculo] clicou label '{pref}'", flush=True)
                 return True
+            # Tenta em botões diretos (Azos às vezes usa button sem label wrapper)
             btn = page.locator("button").filter(has_text=pref).first
             if await btn.count():
                 await btn.click(force=True)
                 await page.wait_for_timeout(500)
+                print(f"[azos][vinculo] clicou button '{pref}'", flush=True)
                 return True
         except Exception:
             pass
 
+    # Fallback: clica no primeiro button[role="radio"] visível
     try:
         radio = page.locator('button[role="radio"]').first
         if await radio.count():
@@ -1033,12 +928,17 @@ async def _selecionar_vinculo_profissional(page: Page) -> bool:
     return False
 
 
-async def _fechar_popup_chat(page: Page):
+async def _fechar_popup_chat(page):
+    """Fecha o popup 'Olá! Eu sou o seu copiloto' que bloqueia cliques na DPS."""
     try:
+        # Botão X do popup
         for sel in [
             'button[aria-label*="fechar"]', 'button[aria-label*="Fechar"]',
             'button[aria-label*="close"]', 'button[aria-label*="Close"]',
-            'button:has-text("×")', 'button:has-text("✕")',
+            '[class*="chat"] button[class*="close"]',
+            '[class*="chat"] button[class*="dismiss"]',
+            # Tenta pelo X visível próximo ao texto "Olá"
+            'button:has-text("×")', 'button:has-text("✕")', 'button:has-text("x")',
         ]:
             try:
                 btn = page.locator(sel).first
@@ -1048,6 +948,7 @@ async def _fechar_popup_chat(page: Page):
                     return
             except Exception:
                 pass
+        # JS: fecha qualquer elemento flutuante/overlay que contenha "copiloto" ou "Olá"
         await page.evaluate("""() => {
             document.querySelectorAll('*').forEach(el => {
                 const txt = (el.innerText || '').toLowerCase();
@@ -1061,10 +962,17 @@ async def _fechar_popup_chat(page: Page):
         pass
 
 
-async def _clicar_nenhum_desses(page: Page) -> bool:
+async def _clicar_nenhum_desses(page) -> bool:
+    """
+    Tela de checkboxes Radix do Azos: clica em 'Nenhum desses/Nenhuma dessas'.
+    DOM real: label > button[role="checkbox"] + input[hidden] + span
+    O input está oculto (pointer-events:none) — deve-se clicar no button via Playwright.
+    """
     await _fechar_popup_chat(page)
     await page.wait_for_timeout(300)
 
+    # ── 1. Itera labels e encontra a que começa com "nenhum" ─────────────
+    # Playwright .click() simula pointerdown+pointerup — Radix responde.
     try:
         labels = await page.locator("label").all()
         for lbl in labels:
@@ -1074,22 +982,26 @@ async def _clicar_nenhum_desses(page: Page) -> bool:
                 continue
             if not (txt.startswith("nenhum") or txt.startswith("nenhuma")):
                 continue
+            # Faz scroll até o elemento ficar visível
             try:
                 await lbl.scroll_into_view_if_needed()
                 await page.wait_for_timeout(300)
             except Exception:
                 pass
+            # Tenta clicar no button[role="checkbox"] dentro do label
             btn_cb = lbl.locator('button[role="checkbox"]').first
             if await btn_cb.count():
                 await btn_cb.click(force=True)
                 await page.wait_for_timeout(400)
                 return True
+            # Fallback: clica no label inteiro
             await lbl.click(force=True)
             await page.wait_for_timeout(400)
             return True
     except Exception:
         pass
 
+    # ── 2. Playwright get_by_role checkbox — último da página ─────────────
     try:
         cb = page.get_by_role("checkbox").last
         if await cb.count():
@@ -1100,6 +1012,7 @@ async def _clicar_nenhum_desses(page: Page) -> bool:
     except Exception:
         pass
 
+    # ── 3. Mouse click via coordenadas JS (fallback) ──────────────────────
     coords = await page.evaluate("""() => {
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         let node;
@@ -1110,7 +1023,7 @@ async def _clicar_nenhum_desses(page: Page) -> bool:
                 if (!el) continue;
                 const r = el.getBoundingClientRect();
                 if (r.width > 0 && r.height > 0)
-                    return {x: r.left + r.width/2, y: r.top + r.height/2};
+                    return { x: r.left + r.width/2, y: r.top + r.height/2 };
             }
         }
         return null;
@@ -1126,10 +1039,21 @@ async def _clicar_nenhum_desses(page: Page) -> bool:
     return False
 
 
-async def _selecionar_nao_exato(page: Page) -> bool:
+async def _selecionar_nao_exato(page) -> bool:
+    """
+    Seleciona 'Não.' em telas de radio Radix do Azos.
+    DOM real:
+      - Pattern A (Radix): div[role="radiogroup"] > label > button[role="radio"] + input[hidden] + p
+      - Pattern B (plain): div[role="radiogroup"] > button (com texto)
+    Usa page.mouse.click() com coordenadas JS para garantir eventos pointer corretos no Radix.
+    """
     await _fechar_popup_chat(page)
     await page.wait_for_timeout(300)
 
+    NAO_EXATOS = {"não.", "não", "nao.", "nao"}
+
+    # ── 1. Coordenadas JS: mais confiável para Radix UI ──────────────────
+    # Aceita texto exato "Não." OU texto que COMEÇA com "Não," (ex: "Não, somente atividades...")
     coords = await page.evaluate("""() => {
         function isNao(txt) {
             const t = txt.trim().toLowerCase();
@@ -1137,30 +1061,35 @@ async def _selecionar_nao_exato(page: Page) -> bool:
                    (t.startsWith('não') && t.length < 100) ||
                    (t.startsWith('nao') && t.length < 100);
         }
+
+        // Prioridade: botões e labels clicáveis
         for (const el of document.querySelectorAll('button, label, [role="radio"], [role="option"]')) {
             const txt = (el.innerText || el.textContent || '').trim();
             if (!isNao(txt)) continue;
             const r = el.getBoundingClientRect();
             if (r.width > 0 && r.height > 0)
-                return {x: r.left + r.width/2, y: r.top + r.height/2};
+                return { x: r.left + r.width/2, y: r.top + r.height/2 };
         }
+
+        // Fallback: qualquer elemento com texto "Não..."
         for (const el of document.querySelectorAll('label, p, span, div, li')) {
             const txt = (el.innerText || '').trim();
             if (!isNao(txt)) continue;
             const r = el.getBoundingClientRect();
             if (r.width > 0 && r.height > 0)
-                return {x: r.left + r.width/2, y: r.top + r.height/2};
+                return { x: r.left + r.width/2, y: r.top + r.height/2 };
         }
+
+        // Procura em nós de texto
         const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
         let node;
         while ((node = walker.nextNode())) {
-            const t = node.textContent.trim().toLowerCase();
-            if (t === 'não.' || t === 'não' || t === 'nao.' || t === 'nao') {
+            if (isNao(node.textContent)) {
                 const pai = node.parentElement;
                 if (!pai) continue;
                 const r = pai.getBoundingClientRect();
                 if (r.width > 0 && r.height > 0)
-                    return {x: r.left + r.width/2, y: r.top + r.height/2};
+                    return { x: r.left + r.width/2, y: r.top + r.height/2 };
             }
         }
         return null;
@@ -1173,7 +1102,7 @@ async def _selecionar_nao_exato(page: Page) -> bool:
         except Exception:
             pass
 
-    NAO_EXATOS = {"não.", "não", "nao.", "nao"}
+    # ── 2. Pattern A (Radix): label com button[role="radio"] ─────────────
     try:
         labels = await page.locator("label").all()
         for lbl in reversed(labels):
@@ -1181,6 +1110,7 @@ async def _selecionar_nao_exato(page: Page) -> bool:
                 txt = (await lbl.inner_text()).strip().lower()
             except Exception:
                 continue
+            # Aceita exato "Não." OU começa com "não" (ex: "Não, somente atividades...")
             if txt not in NAO_EXATOS and not txt.startswith("não") and not txt.startswith("nao"):
                 continue
             btn_radio = lbl.locator('button[role="radio"]').first
@@ -1196,9 +1126,10 @@ async def _selecionar_nao_exato(page: Page) -> bool:
     except Exception:
         pass
 
-    for nome_radio in ["Não.", "Não"]:
+    # ── 3. get_by_role radio com nome "Não." ─────────────────────────────
+    for nome in ["Não.", "Não"]:
         try:
-            radio = page.get_by_role("radio", name=nome_radio, exact=True)
+            radio = page.get_by_role("radio", name=nome, exact=True)
             if await radio.count():
                 await radio.last.click(force=True)
                 await page.wait_for_timeout(400)
@@ -1206,18 +1137,23 @@ async def _selecionar_nao_exato(page: Page) -> bool:
         except Exception:
             pass
 
+    # ── 4. Pattern B: último button[role="radio"] do radiogroup ──────────
     try:
         btns_grupo = await page.locator('div[role="radiogroup"] button[role="radio"]').all()
         if btns_grupo:
-            await btns_grupo[-1].scroll_into_view_if_needed()
-            await btns_grupo[-1].click(force=True)
+            ultimo = btns_grupo[-1]
+            await ultimo.scroll_into_view_if_needed()
+            await ultimo.click(force=True)
             await page.wait_for_timeout(400)
             return True
     except Exception:
         pass
 
+    # ── 5. Último radio genérico da página ───────────────────────────────
     try:
-        radios = await page.locator('input[type="radio"], [role="radio"]').all()
+        radios = await page.locator(
+            'input[type="radio"], [role="radio"]'
+        ).all()
         if radios:
             await radios[-1].click(force=True)
             await page.wait_for_timeout(400)
@@ -1228,7 +1164,11 @@ async def _selecionar_nao_exato(page: Page) -> bool:
     return False
 
 
-async def _responder_estilo_vida(page: Page) -> bool:
+async def _responder_estilo_vida(page) -> bool:
+    """
+    Responde perguntas de estilo de vida.
+    Tenta 'Não' exato primeiro; se não houver, seleciona opção mais saudável.
+    """
     if await _selecionar_nao_exato(page):
         return True
 
@@ -1252,6 +1192,7 @@ async def _responder_estilo_vida(page: Page) -> bool:
         except Exception:
             pass
 
+    # Último recurso: primeira opção (permite avançar)
     try:
         radios = await page.locator('input[type="radio"]').all()
         if radios:
@@ -1264,50 +1205,260 @@ async def _responder_estilo_vida(page: Page) -> bool:
     return False
 
 
-# ─── Cadastro ─────────────────────────────────────────────────────────────────
+async def _fechar_modal_cpf_vinculado(page) -> bool:
+    """
+    Fecha o modal 'Esse CPF já está vinculado ao e-mail' clicando em 'Continuar'.
+    Estratégia: busca o botão DENTRO do dialog (não na página inteira),
+    tenta mouse.click por coordenadas, teclado, e remoção DOM como fallback.
+    """
+    try:
+        corpo = await page.inner_text("body")
+        if ("vinculado ao e-mail" not in corpo.lower()
+                and "esse cpf" not in corpo.lower()):
+            return False
+    except Exception:
+        return False
 
-async def _preencher_cadastro(page: Page, cliente: dict):
-    """Preenche /contratacao/cadastro (novo UI 2025)."""
+    # Salva HTML para debug
+    try:
+        html = await page.content()
+        (_TMP / "azos_modal_cpf.html").write_text(html, encoding="utf-8")
+    except Exception:
+        pass
+
+    def _modal_ainda_aberto(texto: str) -> bool:
+        t = texto.lower()
+        return "vinculado ao e-mail" in t or "esse cpf" in t
+
+    # ── 1. Encontra Continuar DENTRO do dialog → page.mouse.click ────────
+    try:
+        coords = await page.evaluate("""() => {
+            const DIALOG_SELS = [
+                '[role="dialog"]', '[role="alertdialog"]',
+                '[data-radix-dialog-content]', '[data-state="open"]'
+            ];
+            for (const sel of DIALOG_SELS) {
+                for (const dlg of document.querySelectorAll(sel)) {
+                    const r0 = dlg.getBoundingClientRect();
+                    if (r0.width < 10 || r0.height < 10) continue;
+                    // Busca botão Continuar dentro deste dialog
+                    const btns = Array.from(dlg.querySelectorAll('button, a[role="button"]'));
+                    const btn = btns.find(b =>
+                        (b.innerText || b.textContent || '').trim()
+                            .toLowerCase().includes('continuar')
+                    ) || btns[btns.length - 1];
+                    if (btn) {
+                        const r = btn.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0)
+                            return {x: r.left + r.width/2, y: r.top + r.height/2,
+                                    src: sel, text: (btn.innerText||'').trim()};
+                    }
+                }
+            }
+            return null;
+        }""")
+        if coords:
+            await page.mouse.click(coords["x"], coords["y"])
+            await page.wait_for_timeout(1_200)
+            if not _modal_ainda_aberto(await page.inner_text("body")):
+                return True
+    except Exception:
+        pass
+
+    # ── 2. ÚLTIMO botão Continuar na página → page.mouse.click ───────────
+    try:
+        coords2 = await page.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button')).reverse();
+            const btn = btns.find(b =>
+                (b.innerText || b.textContent || '').trim()
+                    .toLowerCase().includes('continuar')
+            );
+            if (btn) {
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0)
+                    return {x: r.left + r.width/2, y: r.top + r.height/2,
+                            text: btn.innerText.trim()};
+            }
+            return null;
+        }""")
+        if coords2:
+            await page.mouse.click(coords2["x"], coords2["y"])
+            await page.wait_for_timeout(1_200)
+            if not _modal_ainda_aberto(await page.inner_text("body")):
+                return True
+    except Exception:
+        pass
+
+    # ── 3. React fiber onClick (chama handler diretamente) ────────────────
+    try:
+        ok = await page.evaluate("""() => {
+            const btns = Array.from(document.querySelectorAll('button')).reverse();
+            for (const btn of btns) {
+                if (!(btn.innerText||'').toLowerCase().includes('continuar')) continue;
+                const r = btn.getBoundingClientRect();
+                if (r.width === 0 || r.height === 0) continue;
+                // React props
+                for (const key of Object.keys(btn)) {
+                    if (key.startsWith('__reactProps')) {
+                        const p = btn[key];
+                        if (p && p.onClick) {
+                            p.onClick({type:'click',preventDefault:()=>{},stopPropagation:()=>{}});
+                            return 'reactProps';
+                        }
+                    }
+                    if (key.startsWith('__reactFiber')) {
+                        let f = btn[key];
+                        while (f) {
+                            if (f.memoizedProps && f.memoizedProps.onClick) {
+                                f.memoizedProps.onClick({type:'click',preventDefault:()=>{},stopPropagation:()=>{}});
+                                return 'fiberMemo';
+                            }
+                            f = f.return;
+                        }
+                    }
+                }
+                btn.click();
+                return 'jsClick';
+            }
+            return false;
+        }""")
+        if ok:
+            await page.wait_for_timeout(1_200)
+            if not _modal_ainda_aberto(await page.inner_text("body")):
+                return True
+    except Exception:
+        pass
+
+    # ── 4. Teclado: Tab + Enter ───────────────────────────────────────────
+    try:
+        # Pressiona Tab 1-3 vezes tentando focar no botão Continuar, depois Enter
+        for _ in range(3):
+            await page.keyboard.press("Tab")
+            await page.wait_for_timeout(150)
+            focused = await page.evaluate(
+                "() => (document.activeElement?.innerText||'').toLowerCase()"
+            )
+            if "continuar" in focused:
+                await page.keyboard.press("Enter")
+                await page.wait_for_timeout(1_200)
+                if not _modal_ainda_aberto(await page.inner_text("body")):
+                    return True
+                break
+    except Exception:
+        pass
+
+    # ── 5. Remove backdrop → Playwright force click ───────────────────────
+    try:
+        await page.evaluate("""() => {
+            // Desabilita apenas o backdrop/overlay para liberar o clique
+            document.querySelectorAll(
+                '[data-radix-dialog-overlay], [data-overlay], [class*="backdrop"], [class*="overlay"]'
+            ).forEach(el => {
+                el.style.pointerEvents = 'none';
+                el.style.display = 'none';
+            });
+        }""")
+        await page.wait_for_timeout(200)
+        btn = page.locator('[role="dialog"] button, [role="alertdialog"] button').last
+        if not await btn.count():
+            btn = page.locator("button").filter(has_text="Continuar").last
+        if await btn.count():
+            await btn.click(force=True)
+            await page.wait_for_timeout(1_000)
+            if not _modal_ainda_aberto(await page.inner_text("body")):
+                return True
+    except Exception:
+        pass
+
+    # ── 6. Remove modal do DOM (nuclear) ─────────────────────────────────
+    try:
+        await page.evaluate("""() => {
+            const SELS = ['[role="dialog"]', '[role="alertdialog"]',
+                          '[data-radix-dialog-content]', '[data-state="open"]',
+                          '[class*="modal"]', '[class*="dialog"]'];
+            for (const sel of SELS) {
+                document.querySelectorAll(sel).forEach(el => {
+                    if ((el.innerText||'').toLowerCase().includes('vinculado')
+                        || (el.innerText||'').toLowerCase().includes('esse cpf')) {
+                        el.remove();
+                    }
+                });
+            }
+            // Remove overlays fixos que possam estar bloqueando o form
+            document.querySelectorAll('*').forEach(el => {
+                const s = window.getComputedStyle(el);
+                if ((s.position === 'fixed' || s.position === 'absolute')
+                    && parseFloat(s.zIndex || '0') > 100
+                    && !el.querySelector('input, select, textarea')) {
+                    el.style.display = 'none';
+                }
+            });
+        }""")
+        await page.wait_for_timeout(600)
+        return True
+    except Exception:
+        pass
+
+    return False
+
+
+async def _preencher_cadastro(page, cliente: dict):
+    """
+    Preenche a tela /contratacao/cadastro.
+    Campos reais: cpf (name="cpf" type="tel"), phone (name="phone"),
+    email (name="email"), estado civil (div[name="marital_status"] button[role="radio"]),
+    PEP (label > button[role="radio"] + span.body2).
+    """
     await page.wait_for_timeout(500)
 
-    # CPF
+    # CPF — input[name="cpf"] type="tel"
     cpf = str(cliente.get("cpf", "")).replace(".", "").replace("-", "").strip()
     if cpf:
         try:
             inp = page.locator('input[name="cpf"]').first
-            if await inp.count() and await inp.is_visible():
+            if await inp.count():
                 await inp.click()
                 await inp.fill("")
                 await inp.type(cpf, delay=40)
+                # Tab dispara o blur do campo → aguarda o modal aparecer (pode levar até 4s)
                 await inp.press("Tab")
                 for _ in range(8):
                     await page.wait_for_timeout(500)
-                    corpo = (await page.inner_text("body")).lower()
-                    if "vinculado ao e-mail" in corpo or "esse cpf" in corpo:
-                        break
+                    corpo_check = (await page.inner_text("body")).lower()
+                    if "vinculado ao e-mail" in corpo_check or "esse cpf" in corpo_check:
+                        break  # modal detectado, para de esperar
+                # Modal "Esse CPF já está vinculado ao e-mail" → clica Continuar
                 await _fechar_modal_cpf_vinculado(page)
                 await page.wait_for_timeout(500)
         except Exception:
             pass
 
-    # Telefone
-    tel = str(cliente.get("telefone", "")).replace("(", "").replace(")", "").replace(" ", "").replace("-", "").replace("+", "")
-    if tel.startswith("55") and len(tel) in (11, 12, 13):
-        candidate = tel[2:]
+    # Telefone — input[name="phone"]
+    # Remove formatação: parênteses, espaços, traços, +
+    telefone = str(cliente.get("telefone", "")).replace("(", "").replace(")", "").replace(" ", "").replace("-", "").replace("+", "")
+    # Remove prefixo de país "55" se presente (ex: 5561999991234 → 61999991234)
+    # Aceita de 11 até 13 dígitos com "55" no início
+    if telefone.startswith("55") and len(telefone) in (11, 12, 13):
+        candidate = telefone[2:]
         if len(candidate) in (9, 10, 11):
-            tel = candidate
-    if len(tel) == 10 and tel[2] != "9":
-        tel = tel[:2] + "9" + tel[2:]
-    if tel:
+            telefone = candidate
+    # Números de 10 dígitos são fixos (pré-2012); adiciona "9" após o DDD
+    # para converter para padrão móvel (11 dígitos) que o Azos exige
+    if len(telefone) == 10 and telefone[2] != "9":
+        telefone = telefone[:2] + "9" + telefone[2:]
+    if telefone:
         try:
             inp = page.locator('input[name="phone"]').first
             if await inp.count() and await inp.is_visible():
-                await inp.fill(tel)
+                # Usa fill() direto — não depende de foco, funciona com modal sobreposto
+                await inp.fill(telefone)
                 await page.wait_for_timeout(400)
         except Exception:
             pass
 
-    # Email
+    # Email — input[name="email"] type="text"
+    # IMPORTANTE: usa fill() direto para evitar que type() vá para elemento errado
+    # (quando o modal CPF está sobreposto, click() falha e type() digita no foco errado)
     email = str(cliente.get("email", "")).strip()
     if email:
         try:
@@ -1318,73 +1469,46 @@ async def _preencher_cadastro(page: Page, cliente: dict):
         except Exception:
             pass
 
-    # Estado civil — novo UI: button[role="radio"] sem wrapper div[name="marital_status"]
-    estado = str(cliente.get("estado_civil", "Solteira/o"))
+    # Estado civil — div[name="marital_status"] button[role="radio"]
+    # Textos reais: "Solteira/o", "Casada/o", "Viúva/o", "Divorciada/o"
+    estado = str(cliente.get("estado_civil", "Solteiro"))
     try:
-        btn = page.locator('button[role="radio"]').filter(has_text=estado).first
+        btn = page.locator('div[name="marital_status"] button[role="radio"]').filter(has_text=estado).first
         if not await btn.count():
-            btn = page.locator('button[role="radio"]').first
-        if await btn.count() and await btn.is_visible():
+            btn = page.locator('div[name="marital_status"] button[role="radio"]').first
+        if await btn.count():
             await btn.click(force=True)
             await page.wait_for_timeout(400)
     except Exception:
         pass
 
-    # PEP "Não" — botões são círculos puros com innerText VAZIO
+    # PEP (is_politically_exposed_person) → Não
     try:
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await page.wait_for_timeout(400)
-        coords = await page.evaluate("""() => {
-            // button[role="radio"] com innerText vazio = botões PEP (círculos)
-            const emptyBtns = [...document.querySelectorAll('button[role="radio"]')]
-                .filter(b => !b.innerText.trim());
-            const naoPep = emptyBtns[emptyBtns.length - 1];
-            if (naoPep) {
-                naoPep.scrollIntoView({block: 'center'});
-                const r = naoPep.getBoundingClientRect();
-                if (r.width >= 10) return {x: r.left + r.width/2, y: r.top + r.height/2, src:'empty-btn'};
-            }
-            // Fallback: input radio nativo visível
-            const inp = document.querySelector(
-                'input[type="radio"][name="is_politically_exposed_person"][value="false"]'
-            );
-            if (inp) {
-                inp.scrollIntoView({block: 'center'});
-                const r = inp.getBoundingClientRect();
-                if (r.width >= 10) return {x: r.left + r.width/2, y: r.top + r.height/2, src:'input'};
-            }
-            // Fallback: nó de texto "Não" → clica no pai
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-            let node;
-            while ((node = walker.nextNode())) {
-                if (node.textContent.trim() !== 'Não') continue;
-                const pai = node.parentElement;
-                if (!pai) continue;
-                const r = pai.getBoundingClientRect();
-                if (r.width >= 5) return {x: r.left + r.width/2, y: r.top + r.height/2, src:'text-node'};
-            }
-            return null;
-        }""")
-        if coords:
-            await page.wait_for_timeout(200)
-            await page.mouse.click(coords["x"], coords["y"])
+        label_nao = page.locator('label').filter(has_text="Não").last
+        if await label_nao.count():
+            await label_nao.click(force=True)
             await page.wait_for_timeout(400)
     except Exception:
         pass
 
     await page.wait_for_timeout(500)
+
+    # Verifica novamente o modal (pode ter aparecido durante o preenchimento)
     await _fechar_modal_cpf_vinculado(page)
 
-    # Sub-tela de endereço (mesmo URL /contratacao/cadastro)
+    # Tela 2: Endereço (mesmo URL /contratacao/cadastro)
     cep_inp = page.locator('input[name="cep"]').first
     if await cep_inp.count() and await cep_inp.is_visible():
         await _preencher_endereco(page, cliente)
 
 
-async def _preencher_endereco(page: Page, cliente: dict):
+async def _preencher_endereco(page, cliente: dict):
+    """Preenche endereço residencial. CEP auto-preenche cidade/estado/rua/bairro."""
     cep = str(cliente.get("cep", "")).replace("-", "").replace(".", "").replace(" ", "").strip()
+    # CEP brasileiro deve ter 8 dígitos — completa com zero à direita se faltar 1
     if cep and len(cep) == 7:
         cep = cep + "0"
+    # Só prossegue se tiver exatamente 8 dígitos numéricos
     if cep and len(cep) == 8 and cep.isdigit():
         for sel in ['input[name="cep"]', 'input[name="zipcode"]', 'input[name="zip_code"]']:
             try:
@@ -1393,14 +1517,21 @@ async def _preencher_endereco(page: Page, cliente: dict):
                     await inp.click()
                     await inp.fill("")
                     await inp.type(cep, delay=80)
-                    for _ in range(12):
+                    # Aguarda auto-fill do CEP (chamada de API pode demorar)
+                    # Polling: para assim que Estado ou Cidade ficar preenchido
+                    for _ in range(12):  # até 6s
                         await page.wait_for_timeout(500)
                         preencheu = await page.evaluate("""() => {
-                            const sels = ['input[name="state"]','input[name="city"]',
-                                          'input[name="street"]','input[name="neighborhood"]'];
+                            const sels = [
+                                'input[name="state"]', 'input[name="city"]',
+                                'input[name="street"]', 'input[name="neighborhood"]',
+                                'select[name="state"]', 'select[name="city"]',
+                                '[name="state"]', '[name="city"]',
+                            ];
                             for (const s of sels) {
                                 const el = document.querySelector(s);
-                                if (el && (el.value||'').trim().length > 0) return true;
+                                if (el && (el.value || el.innerText || '').trim().length > 0)
+                                    return true;
                             }
                             return false;
                         }""")
@@ -1441,77 +1572,296 @@ async def _preencher_endereco(page: Page, cliente: dict):
     await page.wait_for_timeout(500)
 
 
-async def _fechar_modal_cpf_vinculado(page: Page) -> bool:
+async def _preencher_riscos_vida(page, saude: dict):
+    """Delega para _preencher_dps_completo (mesmo mecanismo)."""
+    await _preencher_dps_completo(page, saude)
+
+
+async def _preencher_condicoes_saude(page, saude: dict):
+    """Delega para _preencher_dps_completo (mesmo mecanismo)."""
+    await _preencher_dps_completo(page, saude)
+
+
+async def _preencher_checkout(page) -> None:
+    """
+    Na tela de checkout/pagamento:
+    1. Tenta encontrar e clicar em 'Enviar link' / 'Compartilhar proposta' (opção direta).
+    2. Se não encontrar, seleciona PIX como forma de pagamento e clica Continuar.
+    """
+    await page.wait_for_timeout(500)
+
+    # Tenta botão de "enviar link" / "compartilhar" direto na página
+    for sel in [
+        'button:has-text("Enviar link")',
+        'button:has-text("Compartilhar")',
+        'button:has-text("Enviar proposta")',
+        'a:has-text("Enviar link")',
+        'a:has-text("Compartilhar")',
+        '[aria-label*="compartilhar" i]',
+        '[aria-label*="enviar link" i]',
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() and await el.is_visible():
+                await el.click()
+                await page.wait_for_timeout(1_500)
+                return
+        except Exception:
+            pass
+
+    # Salva HTML para debug
     try:
-        corpo = await page.inner_text("body")
-        if "vinculado ao e-mail" not in corpo.lower() and "esse cpf" not in corpo.lower():
-            return False
+        html = await page.content()
+        from pathlib import Path
+        (_TMP / "azos_checkout.html").write_text(html, encoding="utf-8")
     except Exception:
-        return False
+        pass
 
-    def _aberto(txt: str) -> bool:
-        t = txt.lower()
-        return "vinculado ao e-mail" in t or "esse cpf" in t
+    # Seleciona PIX (sem necessidade de dados de cartão)
+    for sel in [
+        'button:has-text("PIX")',
+        'label:has-text("PIX")',
+        'div[role="radiogroup"] button:has-text("PIX")',
+        '[data-value="pix"]',
+        'input[value="pix"]',
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.count() and await el.is_visible():
+                await el.click()
+                await page.wait_for_timeout(800)
+                break
+        except Exception:
+            pass
 
+    # Clica em Continuar
+    await page.wait_for_timeout(500)
+    await _clicar_continuar(page)
+
+
+async def _extrair_link_proposta(page) -> str | None:
+    """
+    Captura o link de assinatura ClickSign da proposta.
+    Estratégia:
+      1. Tenta na tela atual (proposta-enviada)
+      2. Navega para /vendas, abre a proposta mais recente e pega o link de assinatura
+    Salva HTML para debug.
+    """
+    from pathlib import Path
+
+    try:
+        html = await page.content()
+        (_TMP / "azos_proposta_enviada.html").write_text(html, encoding="utf-8")
+    except Exception:
+        pass
+    await page.screenshot(path=str(_TMP / "azos_proposta_enviada.png"), full_page=True)
+
+    def _e_link_assinatura(url: str) -> bool:
+        """Retorna True se parece ser um link de assinatura ClickSign ou Azos."""
+        u = url.lower()
+        return any(k in u for k in [
+            "clicksign", "assinar", "assinatura", "sign", "signature",
+            "app.clicksign", "/sign/", "d4sign"
+        ])
+
+    # ── 1. Verifica ClickSign ou link de assinatura na página atual ──────────
+    try:
+        links_pag = await page.evaluate("""() => {
+            // inputs readonly (botão "Copiar link")
+            const inputs = Array.from(document.querySelectorAll('input[readonly]'))
+                .map(i => i.value).filter(v => v.startsWith('http'));
+            // links <a>
+            const hrefs = Array.from(document.querySelectorAll('a[href]'))
+                .map(a => a.href).filter(h => h.startsWith('http'));
+            // texto visível com URL
+            const textos = Array.from(document.querySelectorAll('p,span,div,strong'))
+                .map(el => (el.innerText||'').trim())
+                .filter(t => t.startsWith('https://') && t.length < 500);
+            return [...new Set([...inputs, ...hrefs, ...textos])];
+        }""")
+        # Prioridade: link ClickSign
+        for lnk in links_pag:
+            if _e_link_assinatura(lnk):
+                return lnk
+    except Exception:
+        pass
+
+    # ── 2. Botão "Copiar link" → clipboard ───────────────────────────────────
+    for sel in ['button:has-text("Copiar link")', 'button:has-text("Copiar")',
+                '[aria-label*="copiar" i]', 'button:has-text("Compartilhar")']:
+        try:
+            btn = page.locator(sel).first
+            if await btn.count() and await btn.is_visible():
+                await btn.click()
+                await page.wait_for_timeout(800)
+                link = await page.evaluate("navigator.clipboard.readText().catch(()=>'')")
+                if link and link.startswith("http"):
+                    return link.strip()
+        except Exception:
+            pass
+
+    # ── 3. Navega para /vendas e pega o link de assinatura da proposta mais recente
+    try:
+        url_volta = page.url
+        await page.goto("https://corretores.azos.com.br/corretor/vendas",
+                        wait_until="domcontentloaded", timeout=20_000)
+        await page.wait_for_timeout(2_500)
+        await page.screenshot(path=str(_TMP / "azos_vendas.png"), full_page=True)
+
+        # Clica na proposta mais recente (primeira linha da lista)
+        for sel_row in [
+            'table tbody tr:first-child',
+            '[data-testid="proposal-row"]:first-child',
+            'a[href*="/vendas/"]:first-of-type',
+            'tr:first-child td a',
+            '[class*="row"]:first-child',
+            'li:first-child a',
+        ]:
+            try:
+                el = page.locator(sel_row).first
+                if await el.count() and await el.is_visible():
+                    await el.click()
+                    await page.wait_for_timeout(2_500)
+                    break
+            except Exception:
+                pass
+
+        await page.screenshot(path=str(_TMP / "azos_venda_detalhe.png"), full_page=True)
+        html_v = await page.content()
+        (_TMP / "azos_venda_detalhe.html").write_text(html_v, encoding="utf-8")
+
+        # Procura link ClickSign na página de detalhe
+        links_v = await page.evaluate("""() => {
+            const inputs = Array.from(document.querySelectorAll('input[readonly]'))
+                .map(i => i.value).filter(v => v.startsWith('http'));
+            const hrefs = Array.from(document.querySelectorAll('a[href]'))
+                .map(a => a.href).filter(h => h.startsWith('http'));
+            const textos = Array.from(document.querySelectorAll('p,span,div,strong,input'))
+                .map(el => (el.innerText || el.value || '').trim())
+                .filter(t => t.startsWith('https://') && t.length < 500);
+            return [...new Set([...inputs, ...hrefs, ...textos])];
+        }""")
+
+        for lnk in links_v:
+            if _e_link_assinatura(lnk):
+                return lnk
+
+        # Botão "Copiar link de assinatura" na venda
+        for sel in ['button:has-text("Copiar link")', 'button:has-text("Link de assinatura")',
+                    'button:has-text("Copiar")', '[aria-label*="assinatura" i]',
+                    'button:has-text("Enviar link")']:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() and await btn.is_visible():
+                    await btn.click()
+                    await page.wait_for_timeout(800)
+                    link = await page.evaluate("navigator.clipboard.readText().catch(()=>'')")
+                    if link and link.startswith("http"):
+                        return link.strip()
+            except Exception:
+                pass
+
+    except Exception:
+        pass
+
+    # ── 4. Fallback: retorna o que houver (inclusive PDF) ────────────────────
+    try:
+        links_fb = await page.evaluate("""() => {
+            return Array.from(document.querySelectorAll('a[href]'))
+                .map(a => a.href)
+                .filter(h => h.startsWith('http') &&
+                             !h.includes('corretores.azos') &&
+                             !h.includes('googletagmanager') &&
+                             !h.includes('icomoon') &&
+                             !h.includes('cloudflare'));
+        }""")
+        if links_fb:
+            return links_fb[0]
+    except Exception:
+        pass
+
+    return None
+
+    return None
+
+
+async def _clicar_continuar(page):
+    """Clica no botão de avançar (vários nomes possíveis). Ignora botões desabilitados."""
+    seletores = [
+        'button:has-text("Continuar")',
+        'button:has-text("Próximo")',
+        'button:has-text("Avançar")',
+        'button:has-text("Ver cotação")',
+        'button:has-text("Calcular")',
+        'button:has-text("Finalizar")',
+        'button:has-text("Confirmar")',
+        'button[type="submit"]',
+    ]
+    for sel in seletores:
+        try:
+            btn = page.locator(sel).first
+            if not await btn.count():
+                continue
+            if not await btn.is_visible():
+                continue
+            disabled = await btn.get_attribute("disabled")
+            aria_disabled = await btn.get_attribute("aria-disabled")
+            if disabled is not None or aria_disabled == "true":
+                continue
+            await btn.click()
+            return True
+        except Exception:
+            pass
+
+    # Fallback: mouse.click por coordenadas JS (ignora oclusão do popup)
     try:
         coords = await page.evaluate("""() => {
-            const SELS = ['[role="dialog"]','[role="alertdialog"]','[data-radix-dialog-content]','[data-state="open"]'];
-            for (const sel of SELS) {
-                for (const dlg of document.querySelectorAll(sel)) {
-                    const r0 = dlg.getBoundingClientRect();
-                    if (r0.width < 10 || r0.height < 10) continue;
-                    const btns = Array.from(dlg.querySelectorAll('button, a[role="button"]'));
-                    const btn = btns.find(b => (b.innerText||b.textContent||'').trim().toLowerCase().includes('continuar'))
-                                || btns[btns.length - 1];
-                    if (btn) {
-                        const r = btn.getBoundingClientRect();
-                        if (r.width > 0 && r.height > 0)
-                            return {x: r.left + r.width/2, y: r.top + r.height/2};
-                    }
+            const textos = ['Ver cotação', 'Continuar', 'Próximo', 'Avançar', 'Calcular', 'Finalizar', 'Confirmar'];
+            for (const txt of textos) {
+                const btn = [...document.querySelectorAll('button')].find(b =>
+                    b.textContent.trim().includes(txt) && !b.disabled && b.getAttribute('aria-disabled') !== 'true'
+                );
+                if (btn) {
+                    const r = btn.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0)
+                        return {x: r.left + r.width/2, y: r.top + r.height/2, txt: btn.textContent.trim()};
                 }
             }
             return null;
         }""")
         if coords:
+            print(f"[azos] _clicar_continuar fallback mouse.click em '{coords.get('txt','')}' ({coords['x']:.0f},{coords['y']:.0f})", flush=True)
             await page.mouse.click(coords["x"], coords["y"])
-            await page.wait_for_timeout(1200)
-            if not _aberto(await page.inner_text("body")):
-                return True
-    except Exception:
-        pass
-
-    try:
-        await page.evaluate("""() => {
-            const SELS = ['[role="dialog"]','[role="alertdialog"]','[data-radix-dialog-content]',
-                          '[data-state="open"]','[class*="modal"]','[class*="dialog"]'];
-            for (const sel of SELS) {
-                document.querySelectorAll(sel).forEach(el => {
-                    if ((el.innerText||'').toLowerCase().includes('vinculado')
-                        || (el.innerText||'').toLowerCase().includes('esse cpf')) {
-                        el.remove();
-                    }
-                });
-            }
-            document.querySelectorAll('*').forEach(el => {
-                const s = window.getComputedStyle(el);
-                if ((s.position==='fixed'||s.position==='absolute') &&
-                    parseFloat(s.zIndex||'0') > 100 &&
-                    !el.querySelector('input,select,textarea')) {
-                    el.style.display = 'none';
-                }
-            });
-        }""")
-        await page.wait_for_timeout(600)
-        return True
+            return True
     except Exception:
         pass
 
     return False
 
 
-# ─── Helpers de prêmio ────────────────────────────────────────────────────────
+async def _tentar_continuar(page) -> bool:
+    """Tenta avançar e retorna True se conseguiu."""
+    return await _clicar_continuar(page)
+
+
+async def _titulo_pagina(page) -> str:
+    """Extrai título/heading da página atual para detectar o step."""
+    try:
+        h1 = page.locator('h1, h2, [class*="title"], [class*="heading"]').first
+        if await h1.count():
+            return await h1.inner_text()
+    except Exception:
+        pass
+    return page.url
+
 
 def _extrair_premio_mensal(texto: str) -> float | None:
+    """
+    Extrai o prêmio mensal da página de cotação final.
+    Evita pegar o capital segurado (valores muito altos).
+    """
+    import re
+    # Padrões específicos para prêmio (valores baixos, tipicamente R$50–R$500/mês)
     patterns = [
         r'(?:prêmio|premio|mensalidade|parcela|por\s+mês|por\s+mes)[^\n]{0,60}?R\$\s*([\d\.]+,\d{2})',
         r'R\$\s*([\d\.]+,\d{2})\s*/?\s*(?:mês|mes|mensal)',
@@ -1522,11 +1872,13 @@ def _extrair_premio_mensal(texto: str) -> float | None:
         if m:
             try:
                 val = float(m.group(1).replace(".", "").replace(",", "."))
+                # Prêmio mensal tipicamente entre R$20 e R$2000
                 if 20 <= val <= 2000:
                     return val
             except Exception:
                 pass
 
+    # Fallback: pega o menor valor R$ encontrado (provavelmente é o prêmio, não o capital)
     all_vals = re.findall(r'R\$\s*([\d\.]+,\d{2})', texto)
     candidatos = []
     for v in all_vals:
@@ -1537,3 +1889,22 @@ def _extrair_premio_mensal(texto: str) -> float | None:
         except Exception:
             pass
     return min(candidatos) if candidatos else None
+
+
+def _extrair_premio_anual(texto: str) -> float | None:
+    """Extrai o prêmio anual da página de cotação."""
+    import re
+    patterns = [
+        r'(?:anual|anuidade)[^\n]{0,60}?R\$\s*([\d\.]+,\d{2})',
+        r'R\$\s*([\d\.]+,\d{2})\s*/?\s*(?:ano|anual)',
+    ]
+    for pat in patterns:
+        m = re.search(pat, texto, re.IGNORECASE)
+        if m:
+            try:
+                val = float(m.group(1).replace(".", "").replace(",", "."))
+                if 200 <= val <= 20000:
+                    return val
+            except Exception:
+                pass
+    return None

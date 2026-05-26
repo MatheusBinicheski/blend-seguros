@@ -125,32 +125,6 @@ MORTE_QUALQUER_CAUSA = LinhaCongenere(
             ),
             capital_ancora_padrao=100_000,
         ),
-        "omint": CoberturaSeguradora(
-            seguradora="omint",
-            nome_oficial="OMINT IDEAL — Seguro de Vida Individual",
-            nome_no_sistema="OMINT IDEAL - SEGURO DE VIDA INDIVIDUAL",
-            descricao_curta="Termo renovável anualmente, sem resgate (regime de repartição simples).",
-            fonte_cg_url="https://www.omint.com.br/wp-content/themes/OmintPortal360/assets/pdfs/CONDICOES_GERAIS_IDEAL_15414900334201747-2025.pdf",
-            susep="15414.900334/2017-47",
-            vitalicia=False,  # nao confirmado vitalicio publicamente; tratamos como termo renovavel
-            premio_crescente=True,
-            tem_resgate=False,
-            capital_min=20_000,
-            capital_max=1_000_000,
-            idade_min=18,
-            idade_max=70,
-            idade_saida=None,
-            restricoes_profissao=[
-                "Avaliação caso-a-caso via DPSA (Declaração Pessoal de Saúde e Atividade)",
-            ],
-            observacoes=(
-                "Produto de entrada da OMINT, sem componente de capitalização. Renovação anual "
-                "com reajuste por faixa etária. Comissão configurada na cotação: 25% recorrente "
-                "+ 200% no primeiro ano."
-            ),
-            comissao_config="25_200",
-            capital_ancora_padrao=100_000,
-        ),
     },
 )
 

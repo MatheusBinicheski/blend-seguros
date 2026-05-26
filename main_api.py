@@ -1,107 +1,92 @@
 """
-Blend Seguros API — renderização server-side com Jinja2
+Blend Seguros — Cotação automática AZOS + MAG (somente cotação, sem proposta).
+
+Fluxo de jobs:
+  POST /cotar         → cria job, retorna {job_id} imediatamente.
+  GET  /status/{id}   → polling até status=done/error.
+  GET  /              → UI web single-page (VSL + form + resultado).
 """
-import asyncio, time, uuid, os, json
-from contextlib import asynccontextmanager
-from fastapi import FastAPI, Form, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, RedirectResponse
+import os, uuid, time, asyncio
+from pathlib import Path
+from typing import Dict, Any
+from fastapi import FastAPI, Form, BackgroundTasks
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from automacao import azos, mag, omint
-from linhas_congeneres import LINHAS_ATIVAS, MORTE_QUALQUER_CAUSA, por_id
+from automacao.azos        import fase1_dados_pessoais, fase2_selecionar_coberturas
+from automacao         import mag as mag_mod
+from automacao.recomendador import recomendar
 
-JOBS: dict[str, dict] = {}
-JOB_TTL = 1800
+app   = FastAPI(title="Blend Seguros — Cotação")
+_BASE = Path(__file__).parent
 
+try:
+    app.mount("/static", StaticFiles(directory=str(_BASE / "static")), name="static")
+except Exception:
+    pass
 
-def _cpf_valido(cpf: str) -> bool:
-    """Valida CPF brasileiro (11 dígitos + checksum)."""
-    digitos = "".join(c for c in cpf if c.isdigit())
-    if len(digitos) != 11 or digitos == digitos[0] * 11:
-        return False
-    for i in (9, 10):
-        soma = sum(int(digitos[j]) * (i + 1 - j) for j in range(i))
-        d = (soma * 10) % 11
-        if d == 10:
-            d = 0
-        if d != int(digitos[i]):
-            return False
-    return True
+# Jobs em memória: { job_id: {status, pct, msg, result, error, created_at} }
+_jobs: Dict[str, Dict[str, Any]] = {}
 
+# Concurrency: Railway tem RAM apertada. Rodamos AZOS e MAG SEQUENCIAIS por job.
+# Cada job consome um slot — controlamos paralelismo entre clientes via semáforo.
+_MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "1"))
+_sem: asyncio.Semaphore | None = None
 
-def _nome_valido(nome: str) -> bool:
-    """MAG rejeita nomes com números ou caracteres especiais — apenas letras/espaços/acentos."""
-    import re as _re
-    nome = nome.strip()
-    if not nome or len(nome.split()) < 2:
-        return False
-    return bool(_re.fullmatch(r"[A-Za-zÀ-ÿ\s'\-]+", nome))
+# Mapeamento tipo_cobertura → capital MAG Vida Inteira (alvo de cobertura por morte)
+_CAPITAL_MAG_POR_TIPO = {
+    "em_vida":    100_000,   # foco em vida; MAG complementa com morte mínima
+    "apos_morte": 500_000,   # foco em morte; MAG entra forte
+    "mix":        300_000,   # meio termo
+}
 
 
-def _data_valida(data: str) -> bool:
-    """Aceita DD/MM/AAAA com idade entre 18 e 80 anos."""
-    import re as _re
-    digits = _re.sub(r"\D", "", data)
-    if len(digits) != 8:
-        return False
-    try:
-        d, m, y = int(digits[:2]), int(digits[2:4]), int(digits[4:8])
-        from datetime import date
-        nasc = date(y, m, d)
-        hoje = date.today()
-        idade = hoje.year - nasc.year - ((hoje.month, hoje.day) < (nasc.month, nasc.day))
-        return 18 <= idade <= 80
-    except Exception:
-        return False
+def _job_set(job_id: str, **kw):
+    if job_id in _jobs:
+        _jobs[job_id].update(kw)
 
 
-def _novo_job() -> tuple[str, dict]:
-    jid = str(uuid.uuid4())
-    job = {
-        "id": jid,
-        "status": "pending",
-        "msg": "Aguardando...",
-        "created_at": time.time(),
-        "fase1": {},
-        "resultado": [],
-        "erro": None,
-    }
-    JOBS[jid] = job
-    return jid, job
+def _cleanup_old_jobs():
+    cutoff = time.time() - 1800
+    old = [jid for jid, j in _jobs.items() if j["created_at"] < cutoff]
+    for jid in old:
+        del _jobs[jid]
 
 
-def _limpar_jobs_antigos():
-    agora = time.time()
-    for jid in [k for k, j in JOBS.items() if agora - j["created_at"] > JOB_TTL]:
-        JOBS.pop(jid, None)
+@app.on_event("startup")
+async def startup():
+    global _sem
+    _sem = asyncio.Semaphore(_MAX_CONCURRENT)
+    print(f"[blend] startup ok — PORT={os.getenv('PORT','8000')} MAX_CONCURRENT={_MAX_CONCURRENT}",
+          flush=True)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
-
-
-app = FastAPI(title="Blend Seguros", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
-MODULOS = {"azos": azos, "mag": mag, "omint": omint}
-
-# ── Passo 1: formulário ───────────────────────────────────────────────────────
-
+# ── Rotas básicas ────────────────────────────────────────────────────────────
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+async def index():
+    return HTMLResponse((_BASE / "templates" / "index.html").read_text(encoding="utf-8"))
 
 
+@app.get("/health")
+async def health():
+    ativos = sum(1 for j in _jobs.values() if j["status"] in ("queued", "running"))
+    return {"status": "ok", "jobs_ativos": ativos}
+
+
+@app.get("/status/{job_id}")
+async def status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        return JSONResponse({"status": "not_found"}, status_code=404)
+    return JSONResponse(job)
+
+
+# ── Debug endpoints (úteis em prod p/ entender Playwright) ───────────────────
 @app.get("/debug/screenshot/{nome}")
 async def debug_screenshot(nome: str):
-    """Serve screenshots de debug salvas em /tmp/{nome}.png pelos módulos das seguradoras."""
-    from fastapi.responses import FileResponse, PlainTextResponse
     path = f"/tmp/{nome}.png"
     if not os.path.exists(path):
         return PlainTextResponse(f"não existe: {path}", status_code=404)
@@ -110,8 +95,6 @@ async def debug_screenshot(nome: str):
 
 @app.get("/debug/dump/{nome}")
 async def debug_dump(nome: str):
-    """Serve HTML/JSON dumps de /tmp/{nome}.html|.json para depuração."""
-    from fastapi.responses import FileResponse, PlainTextResponse
     for ext in (".html", ".json", ".txt"):
         path = f"/tmp/{nome}{ext}"
         if os.path.exists(path):
@@ -119,287 +102,173 @@ async def debug_dump(nome: str):
     return PlainTextResponse(f"não existe: /tmp/{nome}.html|.json|.txt", status_code=404)
 
 
+# ── POST /cotar ──────────────────────────────────────────────────────────────
 @app.post("/cotar")
 async def cotar(
-    request: Request,
     background_tasks: BackgroundTasks,
-    nome:      str = Form(...),
-    nascimento: str = Form(...),
-    cpf:       str = Form(""),
-    email:     str = Form(""),
-    telefone:  str = Form(""),
-    renda:     str = Form("5000"),
-    sexo:      str = Form("M"),
-    profissao: str = Form("Advogado"),
-    ocupacao:  str = Form("Profissional Liberal"),
+    nome:                    str = Form(...),
+    nascimento:              str = Form(...),
+    altura:                  str = Form("175"),
+    peso:                    str = Form("80"),
+    profissao:               str = Form("Empresário"),
+    sexo:                    str = Form("M"),
+    fumante:                 str = Form("nao"),
+    renda_mensal:            str = Form(...),
+    cpf:                     str = Form(""),
+    email:                   str = Form(""),
+    telefone:                str = Form(""),
+    estado_civil:            str = Form("Solteira/o"),
+    cep:                     str = Form(""),
+    numero:                  str = Form(""),
+    complemento:             str = Form(""),
+    tipo_cobertura:          str = Form("mix"),
+    pratica_esporte_radical: str = Form("nao"),
+    pilota_aviao:            str = Form("nao"),
+    viaja_exterior:          str = Form("nao"),
+    doenca_preexistente:     str = Form("nao"),
+    internacao_2anos:        str = Form("nao"),
+    cirurgia_prevista:       str = Form("nao"),
+    imc_acima_40:            str = Form("nao"),
+    diagnostico_cancer:      str = Form("nao"),
+    diagnostico_cardio:      str = Form("nao"),
+    diagnostico_diabetes:    str = Form("nao"),
+    diagnostico_renal:       str = Form("nao"),
+    diagnostico_hiv:         str = Form("nao"),
+    uso_drogas:              str = Form("nao"),
 ):
-    if not _cpf_valido(cpf):
-        return templates.TemplateResponse("erro.html", {
-            "request": request,
-            "msg": f"CPF '{cpf}' é inválido. Use um CPF válido (a MAG valida o checksum).",
-        })
-    if not _nome_valido(nome):
-        return templates.TemplateResponse("erro.html", {
-            "request": request,
-            "msg": f"Nome '{nome}' é inválido. A MAG bloqueia números e caracteres especiais — use apenas letras (ex: 'João Silva').",
-        })
-    if not _data_valida(nascimento):
-        return templates.TemplateResponse("erro.html", {
-            "request": request,
-            "msg": f"Data '{nascimento}' inválida ou idade fora do range 18-80 anos.",
-        })
-    _limpar_jobs_antigos()
-    jid, job = _novo_job()
-    dados = dict(
-        nome=nome, nascimento=nascimento, cpf=cpf,
-        email=email, telefone=telefone, renda_mensal=renda,
-        sexo=sexo, profissao=profissao, ocupacao=ocupacao,
-    )
-    background_tasks.add_task(_executar_fase1, jid, dados)
-    return RedirectResponse(f"/aguardando/{jid}", status_code=303)
-
-
-# ── Passo 2: página de espera (auto-refresh Python-side) ─────────────────────
-
-@app.get("/aguardando/{job_id}", response_class=HTMLResponse)
-async def aguardando(request: Request, job_id: str):
-    job = JOBS.get(job_id)
-    if not job:
-        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
-    if job["status"] == "fase1_ok":
-        return RedirectResponse(f"/comparativo/{job_id}", status_code=303)
-    if job["status"] == "erro":
-        return templates.TemplateResponse("erro.html", {"request": request, "msg": job.get("erro", "Erro desconhecido.")})
-    return templates.TemplateResponse("aguardando.html", {
-        "request": request,
-        "job_id": job_id,
-        "msg": job.get("msg", "Processando..."),
-    })
-
-
-@app.get("/comparativo/{job_id}", response_class=HTMLResponse)
-async def comparativo(request: Request, job_id: str):
-    """Nova view: tabela conceitual mostrando linhas congêneres + preço por R$ 1.000."""
-    job = JOBS.get(job_id)
-    if not job:
-        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
-    if job["status"] != "fase1_ok":
-        return RedirectResponse(f"/aguardando/{job_id}", status_code=303)
-
-    sondagens_morte: dict[str, dict] = {}
-    for seg, r in job["fase1"].items():
-        if not r.ok:
-            continue
-        for s in getattr(r, "sondagens", []):
-            if s.linha_id == "morte_qualquer_causa":
-                sondagens_morte[seg] = s
-                break
-
-    return templates.TemplateResponse("morte_comparativo.html", {
-        "request": request,
-        "job_id": job_id,
-        "linha": MORTE_QUALQUER_CAUSA,
-        "sondagens": sondagens_morte,
-    })
-
-
-# ── Passo 3: tabela de coberturas (renderizada pelo Python) ───────────────────
-
-@app.get("/coberturas/{job_id}", response_class=HTMLResponse)
-async def coberturas(request: Request, job_id: str):
-    job = JOBS.get(job_id)
-    if not job:
-        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
-    if job["status"] != "fase1_ok":
-        return RedirectResponse(f"/aguardando/{job_id}", status_code=303)
-
-    seguradoras = []
-    todas_coberturas = []
-    for seg, r in job["fase1"].items():
-        seguradoras.append({
-            "nome": seg.upper(),
-            "ok": r.ok,
-            "n": len(r.coberturas),
-            "erro": (r.erro or "")[:200] if not r.ok else "",
-        })
-        for c in r.coberturas:
-            todas_coberturas.append({
-                "seg": seg,
-                "session_id": r.session_id or "",
-                "id": c.id,
-                "nome": c.nome,
-                "valor_min": int(c.valor_min),
-                "valor_max": int(c.valor_max),
-                "step": 10000 if c.valor_min >= 10000 else 1000,
-            })
-
-    return templates.TemplateResponse("coberturas.html", {
-        "request": request,
-        "job_id": job_id,
-        "seguradoras": seguradoras,
-        "coberturas": todas_coberturas,
-    })
-
-
-# ── Passo 4: finalizar blend ──────────────────────────────────────────────────
-
-@app.post("/finalizar/{job_id}")
-async def finalizar(
-    background_tasks: BackgroundTasks,
-    job_id: str,
-    selecoes: str = Form(...),
-):
-    job = JOBS.get(job_id)
-    if not job:
-        return RedirectResponse("/", status_code=303)
-    lista = json.loads(selecoes)
-    job["status"] = "finalizando"
-    job["msg"] = "Finalizando cotações..."
-    background_tasks.add_task(_executar_fase2, job_id, lista)
-    return RedirectResponse(f"/resultado/{job_id}", status_code=303)
-
-
-# ── Passo 5: resultado ────────────────────────────────────────────────────────
-
-@app.get("/resultado/{job_id}", response_class=HTMLResponse)
-async def resultado(request: Request, job_id: str):
-    job = JOBS.get(job_id)
-    if not job:
-        return templates.TemplateResponse("erro.html", {"request": request, "msg": "Job não encontrado."})
-    if job["status"] == "finalizando":
-        return templates.TemplateResponse("aguardando.html", {
-            "request": request,
-            "job_id": job_id,
-            "msg": job.get("msg", "Finalizando..."),
-            "redirect": f"/resultado/{job_id}",
-        })
-    cotacoes = [
-        {
-            "seguradora": c.seguradora.upper(),
-            "cobertura_nome": c.cobertura_nome,
-            "valor_capital": int(c.valor_capital),
-            "premio_mensal": c.premio_mensal,
-            "link_proposta": c.link_proposta or "",
-            "erro": c.erro or "",
-        }
-        for c in job.get("resultado", [])
-    ]
-    return templates.TemplateResponse("resultado.html", {
-        "request": request,
-        "cotacoes": cotacoes,
-    })
-
-
-# ── Background tasks ──────────────────────────────────────────────────────────
-
-async def _limpar_sessoes_orfas():
-    """Fecha browsers de sessões antigas que ficaram em _SESSOES sem chamar fase2 (vaza memória)."""
-    from automacao import azos as _az, mag as _mg, omint as _om
-    from automacao.base import fechar_browser
-    for mod in (_az, _mg, _om):
-        sessoes = getattr(mod, "_SESSOES", {})
-        for sid in list(sessoes.keys()):
-            sess = sessoes.pop(sid, None)
-            if sess:
-                try:
-                    await fechar_browser(sess.get("pw"), sess.get("browser"))
-                    print(f"[blend] sessão órfã fechada: {sid}", flush=True)
-                except Exception as e:
-                    print(f"[blend] erro fechando sessão {sid}: {e}", flush=True)
-
-
-async def _executar_fase1(job_id: str, dados: dict):
-    job = JOBS.get(job_id)
-    if not job:
-        return
-    # Limpa browsers vazados de jobs anteriores antes de começar (evita OOM)
-    await _limpar_sessoes_orfas()
-    job["status"] = "coletando"
-    job["msg"] = "Conectando às seguradoras..."
-
-    # Railway tem RAM limitada — até 2 Chromium juntos causaram OOM.
-    # Sem 1: executa uma seguradora por vez (AZOS → MAG → OMINT). ~9min total mas estável.
-    sem = asyncio.Semaphore(1)
-
-    async def coletar(seg: str):
-        mod = MODULOS[seg]
-        last_erro = ""
-        for tentativa in range(3):
-            async with sem:
-                job["msg"] = f"[{seg}] coletando{'...' if tentativa == 0 else f' (tentativa {tentativa+1})'}"
-                try:
-                    result = await mod.fase1_coletar_coberturas(dados, headless=True)
-                    if result.ok:
-                        job["fase1"][seg] = result
-                        print(f"[blend] {seg} ok (tentativa {tentativa+1})", flush=True)
-                        return
-                    last_erro = result.erro or "(sem mensagem)"
-                    print(f"[blend] {seg} tentativa {tentativa+1} falhou: {last_erro}", flush=True)
-                except Exception as e:
-                    last_erro = str(e)
-                    print(f"[blend] {seg} tentativa {tentativa+1} exceção: {last_erro}", flush=True)
-            if tentativa < 2:
-                # Espera maior entre tentativas para o GC liberar memória e o browser anterior fechar de vez
-                await asyncio.sleep(8)
-        from models import ResultadoFase1
-        job["fase1"][seg] = ResultadoFase1(seguradora=seg, ok=False, erro=f"3x falhou — último: {last_erro[:150]}")
-
-    await asyncio.gather(*[coletar(seg) for seg in MODULOS])
-    ok = sum(1 for r in job["fase1"].values() if r.ok)
-    job["status"] = "sondando_preco"
-    job["msg"] = f"{ok}/{len(MODULOS)} seguradoras ok — calculando preços (~5min por seguradora)..."
-
-    # Sondagem de preço via fase2 (confiável mas pesada: percorre DPS/Resumo até gerar cotação)
-    async def sondar(seg: str):
-        r = job["fase1"].get(seg)
-        if not r or not r.ok or not r.session_id:
-            return
-        mod = MODULOS[seg]
-        if not hasattr(mod, "sondar_preco_morte"):
-            return
+    def num(s, d=0.0):
         try:
-            print(f"[blend] iniciando sondagem {seg}...", flush=True)
-            sond = await mod.sondar_preco_morte(r.session_id, capital=100_000)
-            r.sondagens.append(sond)
-            print(f"[blend] sondagem {seg}: premio={sond.premio_mensal} preço/1k={sond.preco_por_1000} erro={sond.erro}", flush=True)
-        except Exception as e:
-            print(f"[blend] sondagem {seg} exceção: {e}", flush=True)
+            return float(str(s).replace(".", "").replace(",", ".").replace("R$", "").strip())
+        except Exception:
+            return d
 
-    # Sondagens sequenciais (cada fase2 fecha browser → libera memória pra próxima)
-    for seg in MODULOS:
-        await sondar(seg)
+    def sim(s):
+        return str(s).strip().lower() == "sim"
 
-    job["status"] = "fase1_ok"
-    job["msg"] = f"{ok}/{len(MODULOS)} seguradoras ok"
+    cliente = {
+        "nome": nome, "nascimento": nascimento,
+        "altura": altura, "peso": peso, "profissao": profissao,
+        "sexo": sexo, "fumante": fumante == "sim",
+        "renda_mensal": num(renda_mensal),
+        "cpf": cpf, "email": email, "telefone": telefone,
+        "estado_civil": estado_civil,
+        "cep": cep, "numero": numero, "complemento": complemento,
+        "tipo_cobertura": tipo_cobertura,
+    }
+
+    saude = {
+        "pratica_esporte_radical": sim(pratica_esporte_radical),
+        "pilota_aviao":            sim(pilota_aviao),
+        "viaja_exterior":          sim(viaja_exterior),
+        "doenca_preexistente":     sim(doenca_preexistente),
+        "internacao_2anos":        sim(internacao_2anos),
+        "cirurgia_prevista":       sim(cirurgia_prevista),
+        "imc_acima_40":            sim(imc_acima_40),
+        "diagnostico_cancer":      sim(diagnostico_cancer),
+        "diagnostico_cardio":      sim(diagnostico_cardio),
+        "diagnostico_diabetes":    sim(diagnostico_diabetes),
+        "diagnostico_renal":       sim(diagnostico_renal),
+        "diagnostico_hiv":         sim(diagnostico_hiv),
+        "uso_drogas":              sim(uso_drogas),
+        "_cliente":                cliente,
+    }
+
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {
+        "status":     "queued",
+        "pct":        0,
+        "msg":        "Na fila...",
+        "result":     None,
+        "error":      None,
+        "created_at": time.time(),
+    }
+    _cleanup_old_jobs()
+    background_tasks.add_task(_run_cotacao, job_id, cliente, saude)
+    return JSONResponse({"job_id": job_id})
 
 
-async def _executar_fase2(job_id: str, selecoes: list[dict]):
-    job = JOBS.get(job_id)
-    if not job:
-        return
-    por_seg: dict[str, list[dict]] = {}
-    sess_ids: dict[str, str] = {}
-    for s in selecoes:
-        seg = s["seguradora"]
-        por_seg.setdefault(seg, []).append({"nome": s["nome"], "valor": s["valor"]})
-        sess_ids[seg] = s.get("session_id", "")
+# ── Worker assíncrono que executa AZOS + MAG ─────────────────────────────────
+async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
+    global _sem
+    _job_set(job_id, status="queued", msg="Aguardando slot disponível...", pct=2)
 
-    async def finalizar_seg(seg: str, sels: list[dict]):
-        mod = MODULOS.get(seg)
-        if not mod:
-            return []
+    async with _sem:  # garante 1 job por vez (Railway low-RAM)
+        result = {"azos": {"erro": "não rodou"}, "mag": {"erro": "não rodou"}}
+        tipo_cob = cliente.get("tipo_cobertura", "mix")
+
+        # ── AZOS ───────────────────────────────────────────────────────────
         try:
-            return await mod.fase2_finalizar(sess_ids.get(seg, ""), sels)
-        except Exception as e:
-            from models import ResultadoCotacao
-            return [ResultadoCotacao(seguradora=seg, cobertura_nome="Erro", valor_capital=0, premio_mensal=0, erro=str(e))]
+            _job_set(job_id, status="running", pct=10,
+                     msg="Abrindo portal Azos e fazendo login...")
 
-    resultados = await asyncio.gather(*[finalizar_seg(seg, sels) for seg, sels in por_seg.items()])
-    job["resultado"] = [c for lista in resultados for c in lista]
-    job["status"] = "finalizado"
-    job["msg"] = f"{len(job['resultado'])} cotações geradas"
+            fase1 = await fase1_dados_pessoais(cliente)
+            if fase1.get("erro"):
+                result["azos"] = {"erro": fase1["erro"][:300]}
+            else:
+                _job_set(job_id, pct=30,
+                         msg="Azos: selecionando coberturas e calibrando prêmio...")
+                coberturas_limits = {c["nome"]: c for c in fase1["coberturas"]}
+                nomes = list(coberturas_limits.keys())
+                selecoes = recomendar(cliente, nomes, tipo_cobertura=tipo_cob)
+
+                # Clampa cada cobertura aos limites reais do Azos
+                for sel in selecoes:
+                    lim = coberturas_limits.get(sel["nome"], {})
+                    v_min = float(lim.get("valor_min") or 50_000)
+                    v_max = float(lim.get("valor_max") or 5_000_000)
+                    sel["valor"] = int(max(v_min, min(v_max, sel["valor"])))
+
+                fase2 = await fase2_selecionar_coberturas(
+                    fase1["session_id"], selecoes, saude=saude,
+                    coberturas_limits=coberturas_limits,
+                )
+                result["azos"] = {
+                    "premio_mensal": fase2.get("premio_mensal"),
+                    "premio_anual":  fase2.get("premio_anual"),
+                    "selecoes":      fase2.get("selecoes") or selecoes,
+                    "erro":          fase2.get("erro"),
+                }
+        except Exception as e:
+            result["azos"] = {"erro": str(e)[:300]}
+
+        # ── MAG ────────────────────────────────────────────────────────────
+        # Sequencial após AZOS (Railway: 2 Chromium juntos = OOM).
+        try:
+            _job_set(job_id, pct=65,
+                     msg="MAG: consultando Vida Inteira (CG 3082/3083)...")
+            capital_mag = _CAPITAL_MAG_POR_TIPO.get(tipo_cob, 300_000)
+            mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
+            result["mag"] = {
+                "premio_mensal": mag_out.get("premio_mensal"),
+                "capital":       mag_out.get("capital"),
+                "produto":       mag_out.get("produto"),
+                "erro":          mag_out.get("erro"),
+            }
+        except Exception as e:
+            result["mag"] = {"erro": str(e)[:300]}
+
+        # ── Conclusão ──────────────────────────────────────────────────────
+        algum_ok = (
+            (result["azos"].get("premio_mensal") and not result["azos"].get("erro"))
+            or (result["mag"].get("premio_mensal") and not result["mag"].get("erro"))
+        )
+        _job_set(
+            job_id,
+            status="done" if algum_ok else "error",
+            pct=100,
+            msg="Cotação concluída!" if algum_ok else "Nenhuma cotação retornada.",
+            result={
+                "nome":        cliente["nome"],
+                "nascimento":  cliente["nascimento"],
+                "tipo_cobertura": tipo_cob,
+                "azos":        result["azos"],
+                "mag":         result["mag"],
+            },
+            error=None if algum_ok else "Ambas seguradoras falharam.",
+        )
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main_api:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run("main_api:app", host="0.0.0.0", port=port, reload=False)
