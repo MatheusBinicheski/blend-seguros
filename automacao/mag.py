@@ -445,6 +445,7 @@ async def _adicionar_produto(page: Page, nome: str, capital):
     if result:
         codigo = result.get("code")
         print(f"  [JS] selecionado: {result.get('text')}", flush=True)
+        await page.screenshot(path="/tmp/mag_produto_selecionado.png", full_page=True)
     else:
         # Captura todas as opções visíveis no dropdown para diagnóstico
         try:
@@ -469,16 +470,23 @@ async def _adicionar_produto(page: Page, nome: str, capital):
         return
 
     ids1 = await _benefit_ids_for(page, codigo)
+    print(f"  [MAG] benefit_ids para codigo={codigo}: {ids1}", flush=True)
     for eid in ids1:
-        await _preencher_benefit_id(page, eid, get_centavos(eid))
+        centavos = get_centavos(eid)
+        print(f"  [MAG] preenchendo eid={eid} centavos={centavos}", flush=True)
+        await _preencher_benefit_id(page, eid, centavos)
 
     if ids1:
         await page.wait_for_timeout(800)
         ids2 = await _benefit_ids_for(page, codigo)
-        for eid in [e for e in ids2 if e not in ids1]:
+        novos = [e for e in ids2 if e not in ids1]
+        if novos:
+            print(f"  [MAG] novos benefit_ids após preencher: {novos}", flush=True)
+        for eid in novos:
             await _preencher_benefit_id(page, eid, get_centavos(eid))
 
     await page.wait_for_timeout(300)
+    await page.screenshot(path="/tmp/mag_pos_preencher.png", full_page=True)
 
 
 async def _confirmar_solucao(page: Page) -> float:
@@ -497,12 +505,14 @@ async def _confirmar_solucao(page: Page) -> float:
         }
         return '';
     }""")
-    print(f"[mag] total pré-confirmar: {total_txt.strip()}", flush=True)
+    print(f"[mag] total pré-confirmar: {total_txt.strip()[:300]}", flush=True)
+    await page.screenshot(path="/tmp/mag_pre_confirmar.png", full_page=True)
 
     btn = page.locator('button:has-text("CONFIRMAR SOLUÇÃO")').first
     await btn.wait_for(state='visible', timeout=10_000)
     await btn.click()
     await page.wait_for_timeout(3000)
+    await page.screenshot(path="/tmp/mag_pos_confirmar.png", full_page=True)
 
     for _ in range(5):
         modal_ok = page.locator('button:has-text("OK"), button:has-text("Ok"), button:has-text("Fechar")')
