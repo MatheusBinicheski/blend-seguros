@@ -223,6 +223,7 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
                 fase2 = await fase2_selecionar_coberturas(
                     fase1["session_id"], selecoes, saude=saude,
                     coberturas_limits=coberturas_limits,
+                    parar_cotacao=True,   # blend: ler prêmio direto da tela de coberturas
                 )
                 result["azos"] = {
                     "premio_mensal": fase2.get("premio_mensal"),
