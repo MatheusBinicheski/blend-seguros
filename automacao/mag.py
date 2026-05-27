@@ -403,8 +403,15 @@ async def _adicionar_produto(page: Page, nome: str, capital):
 
     print(f"[mag] adicionando: {nome}", flush=True)
 
+    # Se o nome contém um código entre parênteses, ele tem prioridade no match
+    # (ex: "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)" → busca por código 3061
+    # para desambiguar entre 3058, 3060 e 3061 que compartilham o mesmo prefixo).
+    import re as _re
+    _m_cod = _re.search(r'\((\d+)\)\s*$', nome)
+    codigo_desejado = _m_cod.group(1) if _m_cod else None
+    nome_limpo = _re.sub(r'\s*\(\d+\)\s*$', '', nome).strip()
+
     # O combobox de produto é o último input[aria-autocomplete="list"] na página
-    # (os primeiros 3 são dos dados do cliente que ficam no formulário).
     combo = page.locator('input[aria-autocomplete="list"]').last
     try:
         await combo.scroll_into_view_if_needed(timeout=5_000)
@@ -412,39 +419,52 @@ async def _adicionar_produto(page: Page, nome: str, capital):
         pass
     await combo.click(force=True)
     await page.wait_for_timeout(300)
-    await combo.type(nome[:20], delay=60)
+    await combo.type(nome_limpo[:20], delay=60)
     await page.wait_for_timeout(2500)
 
-    # O dropdown de produto do MAG é uma grade customizada (não React Select padrão).
-    # JS puro: encontra o elemento visível com texto contendo o nome do produto.
-    nome_busca = nome[:20].lower()
-    result = await page.evaluate("""(nomeBusca) => {
+    # JS dropdown: 1º) match exato pelo código (NNNN), 2º) match por nome,
+    # 3º) primeira opção com padrão "NOME (CODE)".
+    nome_busca = nome_limpo[:20].lower()
+    result = await page.evaluate("""({nomeBusca, codigoDesejado}) => {
+        // 1) match por código entre parênteses no fim
+        if (codigoDesejado) {
+            for (const el of document.querySelectorAll('div, li, span')) {
+                if (el.children.length > 0 || !el.offsetParent) continue;
+                const txt = (el.textContent || '').trim();
+                const m = txt.match(/\\((\\d+)\\)\\s*$/);
+                if (m && m[1] === codigoDesejado) {
+                    el.click();
+                    return { text: txt, code: m[1], matched_by: 'code' };
+                }
+            }
+        }
+        // 2) match por nome (substring lowercase)
         for (const el of document.querySelectorAll('div, li, span')) {
             if (el.children.length > 0 || !el.offsetParent) continue;
             const txt = (el.textContent || '').trim();
             if (txt.toLowerCase().includes(nomeBusca)) {
                 const m = txt.match(/\\((\\d+)\\)/);
                 el.click();
-                return { text: txt, code: m ? m[1] : null };
+                return { text: txt, code: m ? m[1] : null, matched_by: 'name' };
             }
         }
-        // Fallback: primeiro elemento visível com padrão "NOME (CODE)"
+        // 3) fallback: primeira opção com padrão "NOME (CODE)"
         for (const el of document.querySelectorAll('div, li, span')) {
             if (el.children.length > 0 || !el.offsetParent) continue;
             const txt = (el.textContent || '').trim();
             const m = txt.match(/^.+\\((\\d+)\\)$/);
             if (m) {
                 el.click();
-                return { text: txt, code: m[1] };
+                return { text: txt, code: m[1], matched_by: 'fallback' };
             }
         }
         return null;
-    }""", nome_busca)
+    }""", {"nomeBusca": nome_busca, "codigoDesejado": codigo_desejado})
 
     codigo = None
     if result:
         codigo = result.get("code")
-        print(f"  [JS] selecionado: {result.get('text')}", flush=True)
+        print(f"  [JS] selecionado: {result.get('text')} (matched_by={result.get('matched_by')})", flush=True)
         await page.screenshot(path="/tmp/mag_produto_selecionado.png", full_page=True)
     else:
         # Captura todas as opções visíveis no dropdown para diagnóstico
@@ -933,7 +953,7 @@ async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) ->
             return out
 
         cotacoes = await fase2_finalizar(r1.session_id, [
-            {"nome": "SAF ESSENCIAL FAMILIAR", "valor": int(capital)},
+            {"nome": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)", "valor": int(capital)},
         ])
         if not cotacoes:
             out["erro"] = "Nenhuma cotação retornada"
