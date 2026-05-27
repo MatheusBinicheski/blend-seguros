@@ -365,12 +365,50 @@ async def _editar_solucao(page: Page) -> bool:
 
 
 async def _benefit_ids_for(page: Page, cod: str) -> list:
-    """IDs de inputs do produto que contenham 'benefit' (case-insensitive)."""
-    return await page.evaluate(f"""() => {{
-        return [...document.querySelectorAll('input[id*="product_{cod}"]')]
+    """IDs de inputs do produto que contenham 'benefit' (case-insensitive).
+
+    Em 2026 o MAG mudou os IDs: aceita formatos novos com prefixos diferentes.
+    Salva /tmp/mag_dom_inputs_{cod}.json com TODOS os inputs visíveis para debug.
+    """
+    info = await page.evaluate(f"""() => {{
+        const todos = [...document.querySelectorAll('input')].map(el => ({{
+            id:    el.id || '',
+            name:  el.name || '',
+            type:  el.type || '',
+            value: el.value || '',
+            placeholder: el.placeholder || '',
+            classes: el.className || '',
+            visivel: !!el.offsetParent,
+        }}));
+        const matches = [...document.querySelectorAll('input[id*="product_{cod}"]')]
             .filter(el => el.id.toLowerCase().includes('benefit'))
             .map(el => el.id);
+        return {{ todos, matches }};
     }}""")
+    try:
+        import json as _json
+        with open(f"/tmp/mag_dom_inputs_{cod}.json", "w") as _f:
+            _json.dump(info, _f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+    matches = info.get("matches") or []
+    if not matches:
+        # Fallback: pega inputs visíveis que pareçam de valor monetário (têm R$/centavos)
+        candidatos = [
+            t for t in info.get("todos", [])
+            if t.get("visivel") and (
+                "benefi" in (t.get("id") or "").lower()
+                or "benefi" in (t.get("name") or "").lower()
+                or "R$" in (t.get("value") or "")
+                or "money" in (t.get("classes") or "").lower()
+                or "currency" in (t.get("classes") or "").lower()
+            )
+            and (t.get("id") or t.get("name"))
+        ]
+        print(f"  [MAG] _benefit_ids_for({cod}): matches vazio. "
+              f"Candidatos heurística: {[c.get('id') or c.get('name') for c in candidatos][:6]}", flush=True)
+        matches = [c["id"] for c in candidatos if c.get("id")]
+    return matches
 
 
 async def _preencher_benefit_id(page: Page, eid: str, centavos: str):
