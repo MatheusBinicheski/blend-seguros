@@ -591,6 +591,149 @@
       font-size: .82rem; color: var(--ivory-muted); margin-top: 4px;
     }
 
+    /* ── Tabela comparativa AZOS × MAG ──────────────────────────────────── */
+    .comparativo-table {
+      width: 100%; border-collapse: collapse;
+      margin-top: 22px;
+      font-size: .88rem;
+    }
+    .comparativo-table thead th {
+      text-align: left;
+      font-size: .68rem; font-weight: 700;
+      letter-spacing: .2em; text-transform: uppercase;
+      color: var(--gold);
+      padding: 12px 12px;
+      border-bottom: 1px solid var(--border-gold);
+    }
+    .comparativo-table .th-seg { text-align: center; }
+    .comparativo-table .th-ativa { width: 42px; }
+    .comparativo-table .th-capital { width: 180px; }
+    .comparativo-table .th-escolha { width: 130px; text-align: center; }
+    .comparativo-table tbody tr {
+      border-bottom: 1px solid var(--border-soft);
+      transition: background .15s;
+    }
+    .comparativo-table tbody tr:hover { background: rgba(212,179,106,.04); }
+    .comparativo-table tbody tr.inativa { opacity: .42; }
+    .comparativo-table td { padding: 14px 12px; vertical-align: middle; }
+
+    .comparativo-table input[type="checkbox"] {
+      width: 20px; height: 20px; cursor: pointer; accent-color: var(--gold);
+    }
+    .comparativo-table .linha-info strong {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 1rem; font-weight: 700; color: var(--ivory);
+      display: block; margin-bottom: 3px;
+    }
+    .comparativo-table .linha-info .tipo-badge {
+      display: inline-block; font-size: .6rem;
+      letter-spacing: .12em; text-transform: uppercase; font-weight: 700;
+      padding: 2px 8px; border-radius: 999px;
+      background: rgba(212,179,106,0.1); color: var(--gold);
+      margin-right: 8px;
+    }
+    .comparativo-table .linha-info .desc {
+      font-size: .76rem; color: var(--ivory-muted); line-height: 1.4;
+    }
+    .comparativo-table .capital-cell input[type="number"] {
+      width: 100%; padding: 9px 10px;
+      background: rgba(11,17,36,.7);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      color: var(--ivory);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .9rem; font-weight: 600;
+      text-align: right;
+    }
+    .comparativo-table .capital-cell input[type="number"]:focus {
+      outline: none; border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212,179,106,.12);
+    }
+    .comparativo-table .capital-cell .unidade {
+      display: block; font-size: .66rem; letter-spacing: .14em;
+      text-transform: uppercase; color: var(--gold);
+      font-weight: 700; margin-top: 5px;
+    }
+    .comparativo-table .seg-cell {
+      text-align: center;
+    }
+    .comparativo-table .seg-cell .premio {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 1.05rem; font-weight: 700; color: var(--ivory);
+      letter-spacing: -0.01em;
+    }
+    .comparativo-table .seg-cell .premio.melhor {
+      color: var(--gold);
+    }
+    .comparativo-table .seg-cell .cap-aplicado {
+      display: block; font-size: .68rem; color: var(--ivory-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      margin-top: 3px;
+    }
+    .comparativo-table .seg-cell .ndisp {
+      font-size: .76rem; color: var(--ivory-muted); font-style: italic;
+    }
+    .comparativo-table .seg-cell .fonte-pill {
+      display: inline-block; font-size: .58rem; letter-spacing: .1em;
+      text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
+      margin-top: 3px; font-weight: 700;
+    }
+    .comparativo-table .seg-cell .fonte-pill.calibrada {
+      background: rgba(110,231,183,.12); color: var(--green-glow, #6ee7b7);
+    }
+    .comparativo-table .seg-cell .fonte-pill.estimada {
+      background: rgba(245,241,232,.06); color: var(--ivory-muted);
+    }
+    .comparativo-table .escolha-cell {
+      text-align: center;
+    }
+    .comparativo-table .escolha-cell select {
+      width: 100%; padding: 8px 8px;
+      background: rgba(11,17,36,.7);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      color: var(--ivory);
+      font-family: inherit;
+      font-size: .82rem; font-weight: 600;
+      text-align: center;
+    }
+    .comparativo-table .escolha-cell select:focus {
+      outline: none; border-color: var(--gold);
+    }
+    .comparativo-table .escolha-cell select option { background: var(--bg-deep); }
+
+    .resumo-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px; margin-top: 8px;
+    }
+    @media (max-width: 720px) {
+      .resumo-grid { grid-template-columns: 1fr; }
+      .comparativo-table { font-size: .8rem; }
+      .comparativo-table .th-capital { width: 130px; }
+      .comparativo-table .th-escolha { width: 96px; }
+    }
+    .resumo-cell {
+      padding: 14px 18px;
+      background: rgba(11,17,36,.5);
+      border: 1px solid var(--border-soft);
+      border-radius: 12px;
+    }
+    .resumo-cell.azos { border-color: rgba(79,123,255,.3); }
+    .resumo-cell.mag  { border-color: rgba(212,179,106,.3); }
+    .resumo-cell .label {
+      font-size: .65rem; letter-spacing: .25em;
+      text-transform: uppercase; font-weight: 700;
+      color: var(--ivory-muted); margin-bottom: 6px;
+    }
+    .resumo-cell .valor {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 1.4rem; font-weight: 800; color: var(--ivory);
+      letter-spacing: -0.02em;
+    }
+    .resumo-cell .pequeno {
+      font-size: .76rem; color: var(--ivory-muted); margin-top: 4px;
+    }
+
     /* ── VSL Video ──────────────────────────────────────────────────────── */
     .vsl-video-wrap {
       width: 100%; aspect-ratio: 16/9;
@@ -2489,42 +2632,31 @@
      ═════════════════════════════════════════════════════════════════════════ -->
 <div id="tela-planejamento" class="container" style="display:none">
   <div class="card">
-    <h2 class="card-title">Passo 2 · Planejamento sugerido</h2>
+    <h2 class="card-title">Passo 2 · Blend Comparativo AZOS × MAG</h2>
     <div class="card-subtitle" id="planSubtitle">
       Carregando perfil do cliente...
     </div>
 
     <div class="aviso-box" style="margin-top:18px">
-      <strong>Capitais sugeridos pela renda</strong> — vida 10× renda anual, morte acidental 5×, doenças graves 3×,
-      invalidez 8-10×. Edite cada linha à vontade; desmarcando linhas, elas ficam fora da cotação.
+      <strong>Como funciona:</strong> cada linha é uma cobertura conceitual.
+      O capital é sugerido pela renda do cliente (você edita à vontade) e a
+      <strong>tabela mostra o prêmio estimado em AZOS e MAG lado a lado</strong>.
+      Escolha qual seguradora cobre cada linha para fechar o blend ideal.
+      Os valores são estimativas calibradas — confirme com a cotação real ao final.
     </div>
 
-    <!-- AZOS — múltiplas coberturas editáveis -->
-    <div class="sec-label" style="margin-top:24px">AZOS · Coberturas individuais</div>
-    <table class="plan-table" id="azosTable">
+    <table class="comparativo-table" id="comparativoTable">
       <thead>
         <tr>
-          <th style="width:42px">Ativa</th>
-          <th>Cobertura</th>
-          <th style="width:200px">Capital (R$)</th>
-          <th style="width:180px">Limites do produto</th>
+          <th class="th-ativa">Ativa</th>
+          <th class="th-linha">Cobertura</th>
+          <th class="th-capital">Capital segurado</th>
+          <th class="th-seg">AZOS</th>
+          <th class="th-seg">MAG</th>
+          <th class="th-escolha">No blend</th>
         </tr>
       </thead>
-      <tbody id="azosTableBody"></tbody>
-    </table>
-
-    <!-- MAG — produto único de capital fixo -->
-    <div class="sec-label" style="margin-top:32px">MAG · Produto familiar</div>
-    <table class="plan-table" id="magTable">
-      <thead>
-        <tr>
-          <th style="width:42px">Ativa</th>
-          <th>Produto</th>
-          <th style="width:200px">Capital (R$)</th>
-          <th style="width:180px">Observação</th>
-        </tr>
-      </thead>
-      <tbody id="magTableBody"></tbody>
+      <tbody id="comparativoBody"></tbody>
     </table>
 
     <div class="plan-resumo" id="planResumo"></div>
@@ -2532,7 +2664,7 @@
     <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:28px">
       <button type="button" class="btn-cotar-secondary" onclick="voltarParaForm()">← Voltar e editar dados</button>
       <button type="button" class="btn-cotar" id="btnDispararCotacao" onclick="dispararCotacao()">
-        Disparar cotação real (AZOS + MAG) →
+        Confirmar blend e disparar cotação real →
       </button>
     </div>
   </div>
@@ -2901,89 +3033,178 @@ function renderPlanejamento(plan) {
     Foco: <em>${LABELS_COBERTURA[cli.tipo_cobertura] || cli.tipo_cobertura}</em>
   `;
 
-  // AZOS
-  const azosBody = document.getElementById('azosTableBody');
-  azosBody.innerHTML = (plan.azos || []).map((c, i) => `
-    <tr data-row="azos-${i}" class="${c.ativo ? '' : 'inativa'}">
-      <td>
-        <input type="checkbox" data-azos-ativo="${i}" ${c.ativo ? 'checked' : ''}
-               onchange="togglePlanRow(this, 'azos', ${i})">
-      </td>
-      <td class="nome-col">
-        <strong>${c.nome}</strong>
-        <div class="desc">${c.descricao || ''}</div>
-        <span class="motivo">${c.motivo}</span>
-      </td>
-      <td>
-        <input type="number" data-azos-capital="${i}"
-               value="${c.capital_sugerido}" min="${c.min}" max="${c.max}" step="10000"
-               oninput="onPlanCapitalChange()">
-      </td>
-      <td class="limites">
-        <span class="label">Min/Max</span>
-        R$ ${Number(c.min).toLocaleString('pt-BR')} —
-        R$ ${Number(c.max).toLocaleString('pt-BR')}
-      </td>
-    </tr>
-  `).join('');
+  // ── Tabela comparativa AZOS × MAG (uma linha por cobertura conceitual) ───
+  function fmtCap(linha, valor) {
+    if (linha.unidade === 'R$/dia')         return 'R$ ' + Number(valor).toLocaleString('pt-BR') + '/dia';
+    if (linha.unidade === 'R$/mês de renda') return 'R$ ' + Number(valor).toLocaleString('pt-BR') + '/mês';
+    return 'R$ ' + Number(valor).toLocaleString('pt-BR');
+  }
+  function segCellHTML(linha, info, eMelhor) {
+    if (!info || !info.disponivel) {
+      return `<div class="ndisp">— não oferece —</div>
+        ${info && info.obs ? `<div style="font-size:.66rem;color:var(--ivory-muted);margin-top:4px;line-height:1.3;max-width:160px;margin-left:auto;margin-right:auto">${info.obs}</div>` : ''}`;
+    }
+    const premio = Number(info.premio_estimado || 0);
+    const capAp  = info.capital_aplicado || 0;
+    const fixo   = info.modelo_preco === 'fixo' || info.capital_fixo;
+    return `
+      <div class="premio${eMelhor ? ' melhor' : ''}">${'R$ ' + premio.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}<span style="font-size:.7rem;font-weight:500;opacity:.7"> /mês</span></div>
+      <span class="cap-aplicado">${fixo ? 'capital fixo ' : 'capital '}${fmtCap(linha, capAp)}</span>
+      <span class="fonte-pill ${info.fonte || 'estimada'}">${info.fonte === 'calibrada' ? 'real' : 'estimado'}</span>
+      ${info.produto ? `<div style="font-size:.66rem;color:var(--ivory-muted);margin-top:4px;max-width:160px;margin-left:auto;margin-right:auto;line-height:1.3">${info.produto}</div>` : ''}
+    `;
+  }
 
-  // MAG
-  const magBody = document.getElementById('magTableBody');
-  magBody.innerHTML = (plan.mag || []).map((c, i) => `
-    <tr data-row="mag-${i}" class="${c.ativo ? '' : 'inativa'}">
-      <td>
-        <input type="checkbox" data-mag-ativo="${i}" ${c.ativo ? 'checked' : ''}
-               onchange="togglePlanRow(this, 'mag', ${i})">
-      </td>
-      <td class="nome-col">
-        <strong>${c.nome}</strong>
-        <div class="desc">${c.descricao || ''}</div>
-        <span class="motivo">${c.motivo}</span>
-      </td>
-      <td>
-        <input type="number" data-mag-capital="${i}"
-               value="${c.capital_sugerido}" min="${c.min}" max="${c.max}" step="500"
-               ${c.capital_fixo ? 'disabled' : ''}>
-      </td>
-      <td class="limites">
-        ${c.capital_fixo
-          ? '<span class="label">Capital fixo</span>O produto MAG define o capital — não é editável'
-          : '<span class="label">Min/Max</span>R$ ' + Number(c.min).toLocaleString('pt-BR') + ' — R$ ' + Number(c.max).toLocaleString('pt-BR')}
-      </td>
-    </tr>
-  `).join('');
+  const body = document.getElementById('comparativoBody');
+  body.innerHTML = (plan.linhas || []).map((L, i) => {
+    const aDisp = (L.azos || {}).disponivel;
+    const mDisp = (L.mag  || {}).disponivel;
+    const pa = Number((L.azos || {}).premio_estimado || 0);
+    const pm = Number((L.mag  || {}).premio_estimado || 0);
+    let opcoes = '';
+    if (aDisp) opcoes += `<option value="azos" ${L.escolhido_default === 'azos' ? 'selected' : ''}>AZOS</option>`;
+    if (mDisp) opcoes += `<option value="mag"  ${L.escolhido_default === 'mag'  ? 'selected' : ''}>MAG</option>`;
+    opcoes += `<option value="nenhum" ${L.escolhido_default === null ? 'selected' : ''}>—</option>`;
+
+    const passoMin = (L.unidade === 'R$/dia') ? 10 : (L.unidade === 'R$/mês de renda') ? 100 : 10000;
+    return `
+      <tr data-row="${i}" class="${L.ativo_default ? '' : 'inativa'}">
+        <td>
+          <input type="checkbox" data-ativo="${i}" ${L.ativo_default ? 'checked' : ''}
+                 onchange="togglePlanRow(this, ${i})">
+        </td>
+        <td class="linha-info">
+          <strong><span class="tipo-badge">${(L.tipo || '').toUpperCase()}</span>${L.nome}</strong>
+          <div class="desc">${L.descricao || ''}</div>
+        </td>
+        <td class="capital-cell">
+          <input type="number" data-capital="${i}"
+                 value="${L.capital_sugerido}" min="${L.capital_min}" max="${L.capital_max}"
+                 step="${passoMin}"
+                 oninput="onPlanCapitalChange(${i})">
+          <span class="unidade">${L.unidade}</span>
+        </td>
+        <td class="seg-cell" data-azos-cell="${i}">${segCellHTML(L, L.azos, aDisp && (!mDisp || pa <= pm))}</td>
+        <td class="seg-cell" data-mag-cell="${i}">${segCellHTML(L, L.mag,  mDisp && (!aDisp || pm <  pa))}</td>
+        <td class="escolha-cell">
+          <select data-escolha="${i}" onchange="onPlanCapitalChange(${i})">${opcoes}</select>
+        </td>
+      </tr>
+    `;
+  }).join('');
 
   onPlanCapitalChange();
 }
 
-function togglePlanRow(chk, seg, idx) {
+// Recalcula prêmios via taxa observada quando o LP edita o capital
+function _recalcPremio(info, capital) {
+  if (!info || !info.disponivel) return null;
+  const modelo = info.modelo_preco || 'taxa';
+  if (modelo === 'fixo') return Number(info.premio_fixo || 0);
+  const taxa = Number(info.taxa || 0);
+  const idade = (_planejamentoAtual && _planejamentoAtual.cliente.idade) || 35;
+  const fator = 1.0 + Math.max(0, (idade - 35) / 10) * 0.4;
+  if (modelo === 'por_unidade') return Math.round(capital * taxa * fator * 100) / 100;
+  return Math.round((capital / 1000) * taxa * fator * 100) / 100;
+}
+
+function togglePlanRow(chk, idx) {
   const tr = chk.closest('tr');
   tr.classList.toggle('inativa', !chk.checked);
-  onPlanCapitalChange();
+  onPlanCapitalChange(idx);
 }
 
-function onPlanCapitalChange() {
-  // Recalcula total de capital coberto entre AZOS + MAG (somente linhas ativas)
-  let total = 0, n_ativas = 0;
-  document.querySelectorAll('#azosTable tbody tr, #magTable tbody tr').forEach(tr => {
-    const chk = tr.querySelector('input[type="checkbox"]');
-    const num = tr.querySelector('input[type="number"]');
-    if (chk && chk.checked && num) {
-      total += Number(num.value) || 0;
-      n_ativas++;
+function onPlanCapitalChange(linhaIdx) {
+  // Recalcula prêmio das duas seguradoras na linha alterada
+  if (linhaIdx != null && _planejamentoAtual) {
+    const L = _planejamentoAtual.linhas[linhaIdx];
+    const numEl = document.querySelector(`[data-capital="${linhaIdx}"]`);
+    if (numEl && L) {
+      let cap = Number(numEl.value) || 0;
+      // AZOS — clampa ao limite do produto
+      if ((L.azos || {}).disponivel) {
+        const aMin = Number(L.azos.min) || L.capital_min;
+        const aMax = Number(L.azos.max) || L.capital_max;
+        const capA = (L.azos.capital_fixo) ? L.azos.capital_fixo : Math.max(aMin, Math.min(aMax, cap));
+        const p = _recalcPremio(L.azos, capA);
+        L.azos.capital_aplicado = capA;
+        L.azos.premio_estimado  = p;
+        const cell = document.querySelector(`[data-azos-cell="${linhaIdx}"]`);
+        if (cell) {
+          const aDisp = L.azos.disponivel, mDisp = (L.mag||{}).disponivel;
+          const pm = Number((L.mag||{}).premio_estimado || 0);
+          cell.innerHTML = (function(){
+            const fmtFn = (v) => { if (L.unidade === 'R$/dia') return 'R$ ' + Number(v).toLocaleString('pt-BR') + '/dia';
+              if (L.unidade === 'R$/mês de renda') return 'R$ ' + Number(v).toLocaleString('pt-BR') + '/mês';
+              return 'R$ ' + Number(v).toLocaleString('pt-BR'); };
+            const eMelhor = aDisp && (!mDisp || p <= pm);
+            return `<div class="premio${eMelhor ? ' melhor' : ''}">${'R$ ' + p.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}<span style="font-size:.7rem;font-weight:500;opacity:.7"> /mês</span></div>
+              <span class="cap-aplicado">${L.azos.capital_fixo ? 'capital fixo ' : 'capital '}${fmtFn(capA)}</span>
+              <span class="fonte-pill ${L.azos.fonte || 'estimada'}">${L.azos.fonte === 'calibrada' ? 'real' : 'estimado'}</span>
+              ${L.azos.produto ? `<div style="font-size:.66rem;color:var(--ivory-muted);margin-top:4px;max-width:160px;margin-left:auto;margin-right:auto;line-height:1.3">${L.azos.produto}</div>` : ''}`;
+          })();
+        }
+      }
+      if ((L.mag || {}).disponivel) {
+        const mMin = Number(L.mag.min) || L.capital_min;
+        const mMax = Number(L.mag.max) || L.capital_max;
+        const capM = (L.mag.capital_fixo) ? L.mag.capital_fixo : Math.max(mMin, Math.min(mMax, cap));
+        const p = _recalcPremio(L.mag, capM);
+        L.mag.capital_aplicado = capM;
+        L.mag.premio_estimado  = p;
+        const cell = document.querySelector(`[data-mag-cell="${linhaIdx}"]`);
+        if (cell) {
+          const aDisp = (L.azos||{}).disponivel, mDisp = L.mag.disponivel;
+          const pa = Number((L.azos||{}).premio_estimado || 0);
+          cell.innerHTML = (function(){
+            const fmtFn = (v) => { if (L.unidade === 'R$/dia') return 'R$ ' + Number(v).toLocaleString('pt-BR') + '/dia';
+              if (L.unidade === 'R$/mês de renda') return 'R$ ' + Number(v).toLocaleString('pt-BR') + '/mês';
+              return 'R$ ' + Number(v).toLocaleString('pt-BR'); };
+            const eMelhor = mDisp && (!aDisp || p < pa);
+            return `<div class="premio${eMelhor ? ' melhor' : ''}">${'R$ ' + p.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}<span style="font-size:.7rem;font-weight:500;opacity:.7"> /mês</span></div>
+              <span class="cap-aplicado">${L.mag.capital_fixo ? 'capital fixo ' : 'capital '}${fmtFn(capM)}</span>
+              <span class="fonte-pill ${L.mag.fonte || 'estimada'}">${L.mag.fonte === 'calibrada' ? 'real' : 'estimado'}</span>
+              ${L.mag.produto ? `<div style="font-size:.66rem;color:var(--ivory-muted);margin-top:4px;max-width:160px;margin-left:auto;margin-right:auto;line-height:1.3">${L.mag.produto}</div>` : ''}`;
+          })();
+        }
+      }
+    }
+  }
+
+  // Totaliza por seguradora (somente linhas ativas + escolhidas)
+  let totalAzos = 0, totalMag = 0, nAzos = 0, nMag = 0, capTotal = 0;
+  (_planejamentoAtual ? _planejamentoAtual.linhas : []).forEach((L, i) => {
+    const chk    = document.querySelector(`[data-ativo="${i}"]`);
+    const escSel = document.querySelector(`[data-escolha="${i}"]`);
+    if (!chk || !chk.checked || !escSel) return;
+    const escolha = escSel.value;
+    if (escolha === 'azos' && (L.azos||{}).disponivel) {
+      totalAzos += Number(L.azos.premio_estimado || 0);
+      nAzos++;
+      capTotal += Number(L.azos.capital_aplicado || 0);
+    } else if (escolha === 'mag' && (L.mag||{}).disponivel) {
+      totalMag += Number(L.mag.premio_estimado || 0);
+      nMag++;
+      capTotal += Number(L.mag.capital_aplicado || 0);
     }
   });
+  const totalBlend = totalAzos + totalMag;
   document.getElementById('planResumo').innerHTML = `
-    <div>
-      <div class="label">Capital total segurado</div>
-      <div class="valor">${'R$ ' + total.toLocaleString('pt-BR')}</div>
-      <div class="pequeno">${n_ativas} cobertura${n_ativas === 1 ? '' : 's'} ativa${n_ativas === 1 ? '' : 's'} no blend</div>
-    </div>
-    <div style="text-align:right">
-      <div class="label">Próximo passo</div>
-      <div class="pequeno" style="max-width:280px">
-        Clique em "Disparar cotação real" para que o Blend abra os portais
-        AZOS e MAG e calcule o prêmio mensal exato.
+    <div class="resumo-grid">
+      <div class="resumo-cell azos">
+        <div class="label">AZOS — Subtotal</div>
+        <div class="valor">${'R$ ' + totalAzos.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}/mês</div>
+        <div class="pequeno">${nAzos} cobertura${nAzos === 1 ? '' : 's'} no blend</div>
+      </div>
+      <div class="resumo-cell mag">
+        <div class="label">MAG — Subtotal</div>
+        <div class="valor">${'R$ ' + totalMag.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}/mês</div>
+        <div class="pequeno">${nMag} cobertura${nMag === 1 ? '' : 's'} no blend</div>
+      </div>
+      <div class="resumo-cell">
+        <div class="label">Blend Total Estimado</div>
+        <div class="valor" style="color:var(--gold)">${'R$ ' + totalBlend.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2})}/mês</div>
+        <div class="pequeno">Capital total: R$ ${capTotal.toLocaleString('pt-BR')}</div>
       </div>
     </div>
   `;
@@ -3002,31 +3223,30 @@ async function dispararCotacao() {
     alert('Estado do planejamento perdido. Volte para o formulário.');
     return;
   }
-  // Monta o blend a partir do estado atual da tabela
+  // Monta o blend a partir do estado atual da tabela comparativa
   const blend = { azos: [], mag: [] };
-  (_planejamentoAtual.azos || []).forEach((c, i) => {
-    const chk = document.querySelector(`[data-azos-ativo="${i}"]`);
-    const num = document.querySelector(`[data-azos-capital="${i}"]`);
-    if (chk && chk.checked && num) {
+  (_planejamentoAtual.linhas || []).forEach((L, i) => {
+    const chk    = document.querySelector(`[data-ativo="${i}"]`);
+    const numEl  = document.querySelector(`[data-capital="${i}"]`);
+    const escSel = document.querySelector(`[data-escolha="${i}"]`);
+    if (!chk || !chk.checked || !escSel) return;
+    const escolha = escSel.value;
+    const cap = Number(numEl.value) || 0;
+    if (escolha === 'azos' && (L.azos||{}).disponivel) {
       blend.azos.push({
-        id: c.id,
-        nome: c.nome,
-        nome_no_azos: c.nome_no_azos,
-        capital: Number(num.value) || 0,
-        motivo: c.motivo || '',
+        linha_id:       L.id,
+        linha_nome:     L.nome,
+        nome_no_portal: L.azos.nome_no_portal,
+        produto:        L.azos.produto,
+        capital:        L.azos.capital_fixo ? L.azos.capital_fixo : cap,
       });
-    }
-  });
-  (_planejamentoAtual.mag || []).forEach((c, i) => {
-    const chk = document.querySelector(`[data-mag-ativo="${i}"]`);
-    const num = document.querySelector(`[data-mag-capital="${i}"]`);
-    if (chk && chk.checked && num) {
+    } else if (escolha === 'mag' && (L.mag||{}).disponivel) {
       blend.mag.push({
-        id: c.id,
-        codigo: c.codigo,
-        nome: c.nome,
-        nome_no_mag: c.nome_no_mag,
-        capital: Number(num.value) || 0,
+        linha_id:       L.id,
+        linha_nome:     L.nome,
+        nome_no_portal: L.mag.nome_no_portal,
+        produto:        L.mag.produto,
+        capital:        L.mag.capital_fixo ? L.mag.capital_fixo : cap,
       });
     }
   });

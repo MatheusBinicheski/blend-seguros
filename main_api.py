@@ -215,10 +215,10 @@ async def cotar(
 async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
     """
     blend = {
-      "azos": [{"nome_no_azos": str, "capital": int, "id": str}, ...],
-      "mag":  [{"codigo": str, "nome_no_mag": str, "capital": int}, ...],
+      "azos": [{"nome_no_portal": str, "capital": int, "linha_id": str, "linha_nome": str}, ...],
+      "mag":  [{"nome_no_portal": str, "capital": int, "linha_id": str}, ...],
     }
-    Linhas inativas já vieram filtradas pelo frontend.
+    Linhas inativas/não escolhidas já vieram filtradas pelo frontend.
     """
     global _sem
     _job_set(job_id, status="queued", msg="Aguardando slot disponível...", pct=2)
@@ -246,18 +246,18 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
                              msg="Azos: aplicando blend escolhido pelo Life Planner...")
                     coberturas_limits = {c["nome"]: c for c in fase1["coberturas"]}
 
-                    # Mapeia cada linha do blend (nome_no_azos é prefixo/substring)
+                    # Mapeia cada linha do blend (nome_no_portal é prefixo/substring)
                     # para o nome EXATO no portal Azos.
                     selecoes = []
                     nao_encontradas = []
                     for line in azos_blend:
-                        alvo = (line.get("nome_no_azos") or "").lower()
+                        alvo = (line.get("nome_no_portal") or line.get("nome_no_azos") or "").lower()
                         match = next(
                             (n for n in coberturas_limits if alvo and alvo in n.lower()),
                             None,
                         )
                         if not match:
-                            nao_encontradas.append(line.get("nome_no_azos"))
+                            nao_encontradas.append(alvo)
                             continue
                         lim = coberturas_limits[match]
                         v_min = float(lim.get("valor_min") or 50_000)
@@ -266,7 +266,7 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
                         selecoes.append({
                             "nome":   match,
                             "valor":  cap,
-                            "motivo": line.get("motivo") or "",
+                            "motivo": line.get("linha_nome") or line.get("motivo") or "",
                         })
                     if nao_encontradas:
                         print(f"[blend] AZOS coberturas não encontradas no portal: {nao_encontradas}", flush=True)
@@ -298,8 +298,8 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
                 # Se houver mais de uma linha, pega a primeira.
                 m_line = mag_blend[0]
                 capital_mag = int(m_line.get("capital") or 5_500)
-                nome_mag    = m_line.get("nome_no_mag") or \
-                              "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)"
+                nome_mag    = m_line.get("nome_no_portal") or m_line.get("nome_no_mag") \
+                              or "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)"
                 # mag.cotar usa o nome interno do wrapper (já fixado em 3061);
                 # `capital` é só dica — o produto tem capital fixo, será lido do DOM.
                 mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
