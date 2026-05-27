@@ -313,24 +313,56 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
             result["azos"]["erro"] = "Nenhuma cobertura AZOS selecionada"
 
         # ── MAG ────────────────────────────────────────────────────────────
+        # Hoje o wrapper mag.cotar só conhece SAF 3061. Whole Life Sucessão e
+        # Term Life MAG ainda não têm fluxo Playwright dedicado — quando o LP
+        # selecionar essas linhas, o sistema retorna o prêmio ESTIMADO da grid
+        # (sem ir ao portal) e marca como "estimativa" na resposta.
         if mag_blend:
             try:
-                _job_set(job_id, pct=70, msg="MAG: consultando produto selecionado...")
-                # No setup atual o Blend só usa um produto MAG por job (SAF 3061).
-                # Se houver mais de uma linha, pega a primeira.
-                m_line = mag_blend[0]
-                capital_mag = int(m_line.get("capital") or 5_500)
-                nome_mag    = m_line.get("nome_no_portal") or m_line.get("nome_no_mag") \
-                              or "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)"
-                # mag.cotar usa o nome interno do wrapper (já fixado em 3061);
-                # `capital` é só dica — o produto tem capital fixo, será lido do DOM.
-                mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
-                result["mag"] = {
-                    "premio_mensal": mag_out.get("premio_mensal"),
-                    "capital":       mag_out.get("capital"),
-                    "produto":       mag_out.get("produto") or nome_mag,
-                    "erro":          mag_out.get("erro"),
-                }
+                # Procura linha SAF (única com scraping real implementado hoje)
+                saf_line = next(
+                    (m for m in mag_blend if "saf" in (m.get("linha_id") or "").lower()
+                     or "saf" in (m.get("nome_no_portal") or "").lower()),
+                    None,
+                )
+                outras = [m for m in mag_blend if m is not saf_line]
+
+                premio_mag_total = 0.0
+                capital_mag_total = 0
+                produto_descricao = []
+
+                # 1) Se SAF está no blend, cota de verdade no portal
+                if saf_line:
+                    _job_set(job_id, pct=70,
+                             msg="MAG: consultando SAF Essencial Familiar (3061)...")
+                    capital_mag = int(saf_line.get("capital") or 5_500)
+                    mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
+                    if mag_out.get("erro") and not mag_out.get("premio_mensal"):
+                        result["mag"]["erro"] = mag_out["erro"]
+                    else:
+                        premio_mag_total  += float(mag_out.get("premio_mensal") or 0)
+                        capital_mag_total += int(mag_out.get("capital") or 0)
+                        produto_descricao.append(mag_out.get("produto") or "SAF 3061")
+
+                # 2) Outras linhas MAG (Whole Life / Term Life / DG / Cirurgias):
+                #    sem scraping real ainda — devolve estimativa do catálogo (campo
+                #    `premio_estimado_input` enviado pelo frontend, se houver).
+                for m in outras:
+                    p_est = float(m.get("premio_estimado") or 0)
+                    if p_est > 0:
+                        premio_mag_total  += p_est
+                        capital_mag_total += int(m.get("capital") or 0)
+                        produto_descricao.append(f"{m.get('linha_nome') or m.get('produto') or 'MAG'} (estimado)")
+
+                if premio_mag_total > 0:
+                    result["mag"] = {
+                        "premio_mensal": round(premio_mag_total, 2),
+                        "capital":       capital_mag_total,
+                        "produto":       " + ".join(produto_descricao) if produto_descricao else None,
+                        "erro":          None,
+                    }
+                elif not result["mag"].get("erro"):
+                    result["mag"]["erro"] = "Nenhuma linha MAG retornou prêmio"
             except Exception as e:
                 result["mag"]["erro"] = str(e)[:300]
         else:

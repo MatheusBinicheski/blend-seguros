@@ -74,40 +74,106 @@ def _premio_linha(seg_info: dict, capital: int, idade: int) -> float | None:
 # Para cada linha:
 #   anos_renda    → multiplicador da renda anual para capital sugerido
 #   capital_min/max → limites usados pelo input do LP (pode ser sobrescrito por seguradora)
+#   modalidade da seguradora:
+#       "tradicional" → TR1, prêmio reajusta com idade
+#       "term_life"   → prêmio nivelado por prazo (10/15/20/30 anos), termina vigência
+#       "whole_life"  → vitalício com prêmio nivelado (fixo a vida toda)
+#       "pacote_fixo" → produto com capital + prêmio fixos (ex: SAF MAG)
 #   azos/mag.modelo_preco:
-#       "taxa"    → taxa R$/R$1k/mês (calibrada com observações reais)
-#       "fixo"    → produto com capital/prêmio fixo
-#       "diaria"  → tipo DIH/RIT (capital = R$/dia ou R$/mês)
+#       "taxa"        → taxa R$/R$1k/mês (calibrada com observações reais)
+#       "fixo"        → produto com capital/prêmio fixo
+#       "por_unidade" → taxa direta sobre o capital (DIH/RIT — R$/dia ou R$/mês)
 #   azos/mag.fonte → "calibrada" (observada em cotação real) ou "estimada"
 # ──────────────────────────────────────────────────────────────────────────────
 _LINHAS_COMPARATIVAS: list[dict] = [
-    # ── 1) MORTE POR QUALQUER CAUSA ─────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────────
+    # MORTE — 3 linhas distintas para o LP escolher a modalidade ideal:
+    #   (1) Whole Life — vitalício nivelado (Private MAG é o produto líder)
+    #   (2) Term Life — nivelado por prazo (Vida Segura AZOS / Private TL MAG)
+    #   (3) Tradicional — Especialista AZOS (reajusta com idade, mais barato hoje)
+    # ──────────────────────────────────────────────────────────────────────────
+
+    # ── 1) MORTE — WHOLE LIFE (vitalício prêmio nivelado) ─────────────────
     {
-        "id": "morte_qualquer_causa",
-        "nome": "Morte por Qualquer Causa",
+        "id": "morte_whole_life",
+        "nome": "Morte — Whole Life (vitalício nivelado)",
         "tipo": "morte",
-        "descricao": "Indenização aos beneficiários no falecimento por qualquer causa (natural ou acidental).",
+        "modalidade": "whole_life",
+        "descricao": "Vitalício com prêmio fixo a vida toda. Ideal para sucessão patrimonial e clientes de alta renda.",
+        "anos_renda": 10,
+        "capital_min": 100_000, "capital_max": 25_000_000,
+        "azos": {
+            "disponivel": False,
+            "modalidade": "whole_life",
+            "obs": "AZOS Especialista é Tradicional (reajusta com idade) — sem Whole Life nivelado puro.",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Private Solutions · Whole Life Sucessão (3108-3113)",
+            "nome_no_portal": "WHOLE LIFE SUCESSAO",
+            "susep": "15414.901244/2024",
+            "modalidade": "whole_life",
+            "modelo_preco": "taxa", "taxa": 0.55,
+            "min": 1_000_000, "max": 25_000_000,
+            "fonte": "estimada",
+            "obs": "Vitalício, prêmio nivelado fixo. Capital de R$1MM a R$25MM. Idade 25-70.",
+        },
+    },
+
+    # ── 2) MORTE — TERM LIFE NIVELADO (prêmio fixo por 10/15/20/30 anos) ──
+    {
+        "id": "morte_term_life",
+        "nome": "Morte — Term Life (nivelado 20 anos)",
+        "tipo": "morte",
+        "modalidade": "term_life",
+        "descricao": "Prêmio fixo por prazo definido (ex: 20 anos), termina a vigência ao fim do prazo. Custo até 60% menor que Tradicional.",
+        "anos_renda": 10,
+        "capital_min": 100_000, "capital_max": 10_000_000,
+        "azos": {
+            "disponivel": True,
+            "produto": "Vida Segura (Term Life)",
+            "nome_no_portal": "Vida Segura",
+            "modalidade": "term_life",
+            "modelo_preco": "taxa", "taxa": 0.16,
+            "min": 60_000, "max": 3_000_000,
+            "fonte": "estimada",
+            "obs": "Prêmio nivelado por 20 anos; mínimo R$60k. VS5 mais caro. Aceita troca p/ vitalício.",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Private Solutions · Term Life",
+            "nome_no_portal": "TERM LIFE",
+            "modalidade": "term_life",
+            "modelo_preco": "taxa", "taxa": 0.19,
+            "min": 100_000, "max": 10_000_000,
+            "fonte": "estimada",
+            "obs": "Term Life com saldamento. Muito competitivo p/ sexo feminino. Permite mudança p/ vitalício.",
+        },
+    },
+
+    # ── 3) MORTE — TRADICIONAL (Especialista AZOS, reajusta com idade) ────
+    {
+        "id": "morte_tradicional",
+        "nome": "Morte — Tradicional (reajuste etário)",
+        "tipo": "morte",
+        "modalidade": "tradicional",
+        "descricao": "Vitalício com renovação anual e reajuste por idade. Custo inicial menor, mas sobe com o tempo. Maior comissão recorrente.",
         "anos_renda": 10,
         "capital_min": 50_000, "capital_max": 3_000_000,
         "azos": {
             "disponivel": True,
-            "produto": "Seguro de vida (M)",
+            "produto": "Especialista · Morte (M)",
             "nome_no_portal": "Seguro de vida",
             "susep": "15414.604991/2023-12",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.40,
             "min": 50_000, "max": 3_000_000,
             "fonte": "calibrada",
-            "obs": "Vitalícia renovável; reajuste etário.",
+            "obs": "Vitalício renovável; reajuste etário + IPCA. Hoje tem a melhor tabela de reajuste do mercado.",
         },
         "mag": {
-            "disponivel": True,
-            "produto": "SAF Essencial Familiar + Pais e Sogros (3061)",
-            "nome_no_portal": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
-            "modelo_preco": "fixo",
-            "premio_fixo": 28.41, "capital_fixo": 5_500,
-            "min": 5_500, "max": 5_500,
-            "fonte": "calibrada",
-            "obs": "Pacote: titular + cônjuge + pais e sogros (capital fixo, inclui assistência funeral).",
+            "disponivel": False,
+            "obs": "MAG não tem tradicional puro no portal — oferece Whole Life ou Term Life.",
         },
     },
 
@@ -123,6 +189,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Morte Acidental (MAC)",
             "nome_no_portal": "Morte acidental",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.05,
             "min": 50_000, "max": 1_500_000,
             "fonte": "calibrada",
@@ -145,6 +212,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Invalidez Permanente Total (IPT)",
             "nome_no_portal": "Invalidez Permanente",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.11,
             "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
@@ -167,6 +235,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "IPTA Majorada",
             "nome_no_portal": "Invalidez Total por Acidente",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.07,
             "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
@@ -189,6 +258,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Doenças Graves 30 (DG30)",
             "nome_no_portal": "Doenças Graves",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.30,
             "min": 100_000, "max": 800_000,
             "fonte": "calibrada",
@@ -198,6 +268,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Doenças Graves Plus (3501)",
             "nome_no_portal": "DOENÇAS GRAVES PLUS (3501)",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.50,
             "min": 100_000, "max": 500_000,
             "fonte": "estimada",
@@ -217,6 +288,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Cirurgias 2.0 (C2.0)",
             "nome_no_portal": "Cirurgia",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.18,
             "min": 50_000, "max": 200_000,
             "fonte": "estimada",
@@ -225,6 +297,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Cirurgias + Amparo (3511)",
             "nome_no_portal": "CIRURGIAS + AMPARO (3511)",
+            "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.25,
             "min": 50_000, "max": 200_000,
             "fonte": "estimada",
@@ -246,6 +319,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "DIH",
             "nome_no_portal": "Internação",
+            "modalidade": "tradicional",
             "modelo_preco": "por_unidade", "taxa": 0.08,  # R$/mês por cada R$1 de diária
             "min": 100, "max": 1_000,
             "fonte": "estimada",
@@ -271,6 +345,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "RIT (Renda por Incapacidade Temporária)",
             "nome_no_portal": "Renda por Incapacidade",
+            "modalidade": "tradicional",
             "modelo_preco": "por_unidade", "taxa": 0.025,  # R$/mês por R$1 de renda
             "min": 1_000, "max": 30_000,
             "fonte": "estimada",
@@ -287,6 +362,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         "id": "funeral",
         "nome": "Assistência Funeral",
         "tipo": "assistencia",
+        "modalidade": "pacote_fixo",
         "descricao": "Cobertura dos custos de funeral até o limite contratado (titular + dependentes).",
         "anos_renda": 0,
         "capital_min": 5_000, "capital_max": 30_000,
@@ -295,6 +371,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "disponivel": True,
             "produto": "Assistência Funeral Familiar (AFF)",
             "nome_no_portal": "Funeral",
+            "modalidade": "pacote_fixo",
             "modelo_preco": "fixo", "premio_fixo": 14.90,
             "min": 5_000, "max": 30_000,
             "fonte": "estimada",
@@ -302,9 +379,36 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         },
         "mag": {
             "disponivel": True,
+            "modalidade": "pacote_fixo",
             "obs": "Componente embutido nos pacotes SAF MAG — sem prêmio adicional.",
             "modelo_preco": "fixo", "premio_fixo": 0.0,
+        },
+    },
+
+    # ── 10) SAF FAMILIAR (Pacote MAG: titular + cônjuge + pais e sogros) ──
+    {
+        "id": "saf_familiar",
+        "nome": "SAF Familiar (Pacote MAG)",
+        "tipo": "assistencia",
+        "modalidade": "pacote_fixo",
+        "descricao": "Pacote MAG que cobre o titular + cônjuge + pais + sogros com capital fixo. Inclui assistência funeral. Vendido apenas pela MAG.",
+        "anos_renda": 0,
+        "capital_min": 5_500, "capital_max": 5_500,
+        "unidade": "Limite R$",
+        "azos": {
+            "disponivel": False,
+            "obs": "Equivalente: AFF (Assistência Funeral Familiar) vendido separadamente.",
+        },
+        "mag": {
             "disponivel": True,
+            "produto": "SAF Essencial Familiar + Pais e Sogros (3061)",
+            "nome_no_portal": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
+            "modalidade": "pacote_fixo",
+            "modelo_preco": "fixo",
+            "premio_fixo": 28.41, "capital_fixo": 5_500,
+            "min": 5_500, "max": 5_500,
+            "fonte": "calibrada",
+            "obs": "Pacote familiar com capital fixo R$5.500. Cross-sell após primeira venda MAG.",
         },
     },
 ]
@@ -411,6 +515,7 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
             "id":             L["id"],
             "nome":           L["nome"],
             "tipo":           tipo,
+            "modalidade":     L.get("modalidade"),
             "descricao":      L["descricao"],
             "unidade":        L.get("unidade") or "Capital (R$)",
             "capital_sugerido": cap,
