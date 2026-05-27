@@ -17,7 +17,7 @@ Fluxo B2B (corretor monta o plano antes de cotar):
 import os, uuid, time, asyncio, json
 from pathlib import Path
 from typing import Dict, Any
-from fastapi import FastAPI, Form, BackgroundTasks
+from fastapi import FastAPI, Form, BackgroundTasks, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -90,6 +90,28 @@ async def status(job_id: str):
     if not job:
         return JSONResponse({"status": "not_found"}, status_code=404)
     return JSONResponse(job)
+
+
+# ── POST /audio-historia ─────────────────────────────────────────────────────
+# Recebe gravação de áudio do Life Planner descrevendo a história do cliente.
+# Salva em /tmp/blend_audios/{timestamp}_{nome}.webm.
+@app.post("/audio-historia")
+async def audio_historia(
+    audio: UploadFile = File(...),
+    cliente_nome: str = Form(""),
+):
+    pasta = Path("/tmp/blend_audios")
+    pasta.mkdir(parents=True, exist_ok=True)
+    nome_safe = "".join(c if c.isalnum() else "_" for c in cliente_nome)[:60] or "cliente"
+    fname = f"{int(time.time())}_{nome_safe}.webm"
+    destino = pasta / fname
+    try:
+        with open(destino, "wb") as f:
+            f.write(await audio.read())
+        print(f"[blend][audio] gravado: {destino} ({destino.stat().st_size} bytes)", flush=True)
+        return {"ok": True, "file": fname, "bytes": destino.stat().st_size}
+    except Exception as e:
+        return JSONResponse({"ok": False, "erro": str(e)[:200]}, status_code=500)
 
 
 # ── Debug endpoints ──────────────────────────────────────────────────────────
