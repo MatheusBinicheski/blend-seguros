@@ -484,6 +484,113 @@
       box-shadow: none;
     }
 
+    .btn-cotar-secondary {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 14px 28px;
+      background: transparent;
+      color: var(--ivory-soft);
+      border: 1px solid var(--border-soft);
+      border-radius: 999px;
+      font-size: .82rem; font-weight: 600; letter-spacing: .15em;
+      text-transform: uppercase; cursor: pointer;
+      transition: all .2s; font-family: inherit;
+    }
+    .btn-cotar-secondary:hover {
+      color: var(--ivory); border-color: var(--ivory-soft);
+      background: rgba(245,241,232,0.04);
+    }
+
+    /* ── Planejamento — tabela editável ────────────────────────────────── */
+    .plan-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 14px;
+      font-size: .9rem;
+    }
+    .plan-table thead th {
+      text-align: left;
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+      color: var(--gold);
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-gold);
+    }
+    .plan-table tbody tr {
+      border-bottom: 1px solid var(--border-soft);
+      transition: background .15s;
+    }
+    .plan-table tbody tr.inativa { opacity: .42; }
+    .plan-table tbody tr:hover { background: rgba(212,179,106,.04); }
+    .plan-table td { padding: 14px 14px; vertical-align: middle; }
+    .plan-table .nome-col strong {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 1.05rem; font-weight: 700; color: var(--ivory);
+      display: block; margin-bottom: 4px;
+    }
+    .plan-table .nome-col .desc {
+      font-size: .8rem; color: var(--ivory-muted); line-height: 1.5;
+    }
+    .plan-table .nome-col .motivo {
+      font-size: .72rem; color: var(--gold);
+      letter-spacing: .04em; margin-top: 5px;
+      display: inline-block;
+    }
+    .plan-table input[type="number"] {
+      width: 100%; padding: 9px 12px;
+      background: rgba(11,17,36,.7);
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      color: var(--ivory);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: .92rem; font-weight: 600;
+      text-align: right;
+    }
+    .plan-table input[type="number"]:focus {
+      outline: none; border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212,179,106,.12);
+    }
+    .plan-table input[type="number"]:disabled {
+      opacity: .5; cursor: not-allowed;
+    }
+    .plan-table .limites {
+      font-size: .74rem;
+      color: var(--ivory-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      line-height: 1.4;
+    }
+    .plan-table .limites .label {
+      font-size: .65rem; letter-spacing: .15em;
+      text-transform: uppercase; color: var(--gold);
+      font-weight: 700; display: block;
+    }
+    .plan-table input[type="checkbox"] {
+      width: 20px; height: 20px; cursor: pointer;
+      accent-color: var(--gold);
+    }
+    .plan-resumo {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 28px; padding: 20px 24px;
+      background: rgba(212,179,106,.06);
+      border: 1px solid var(--border-gold);
+      border-radius: 14px;
+      flex-wrap: wrap; gap: 12px;
+    }
+    .plan-resumo .label {
+      font-size: .72rem; letter-spacing: .25em;
+      text-transform: uppercase; color: var(--ivory-muted);
+      font-weight: 600;
+    }
+    .plan-resumo .valor {
+      font-family: 'Bricolage Grotesque', sans-serif;
+      font-size: 1.8rem; font-weight: 800; color: var(--ivory);
+      letter-spacing: -0.02em;
+    }
+    .plan-resumo .pequeno {
+      font-size: .82rem; color: var(--ivory-muted); margin-top: 4px;
+    }
+
     /* ── VSL Video ──────────────────────────────────────────────────────── */
     .vsl-video-wrap {
       width: 100%; aspect-ratio: 16/9;
@@ -1847,22 +1954,23 @@
 
       <!-- ESQUERDA — Headline gigante display -->
       <div class="hero-left">
-        <div class="br-ribbon fade-in" aria-label="Escudo Brasileiro">
+        <div class="br-ribbon fade-in" aria-label="Para Life Planners">
           <span class="br-ribbon-flag" aria-hidden="true"></span>
-          Escudo Brasileiro
+          Para Life Planners
         </div>
-        <div class="hero-eyebrow fade-in">Patrimônio · Família · Legado</div>
+        <div class="hero-eyebrow fade-in">Planejamento · Blend · Cotação</div>
         <h1 class="hero-headline" data-split-words>
-          Quem tem seguro de vida<br>
-          <span class="accent-line">não morre.</span>
+          O melhor blend<br>
+          <span class="accent-line">para o seu cliente.</span>
         </h1>
         <div class="hero-sub fade-in d3">
-          Não morre financeiramente. Não deixa dívida.
-          Não abandona a família sem nada.
+          Em segundos, monte um planejamento com <strong>AZOS</strong> e <strong>MAG</strong>
+          lado a lado — capital sugerido pelo perfil, edição livre e cotação real
+          disparada com um clique.
         </div>
         <div class="hero-actions fade-in d4">
           <a class="hero-cta" href="#coberturas">
-            Ver coberturas <span class="hero-cta-arrow"></span>
+            Começar planejamento <span class="hero-cta-arrow"></span>
           </a>
         </div>
       </div>
@@ -1888,8 +1996,9 @@
         </div>
         <div class="hero-institutional fade-in d3">
           <span class="label">Blend · 2026</span>
-          Proteção real para quem vive. Aprovação 100% digital, sem exame médico,
-          em parceria com <strong>AZOS</strong> e <strong>MAG Seguros</strong> — comparativo lado a lado, na mesma cotação.
+          Ferramenta de planejamento para corretores e Life Planners. Em uma única tela
+          você vê todas as coberturas das duas seguradoras, ajusta capitais e dispara
+          cotação real nos portais oficiais.
         </div>
       </div>
 
@@ -1900,29 +2009,18 @@
   <div class="container" id="coberturas">
   <div class="card shimmer">
 
-    <!-- Copy bloco -->
+    <!-- Como funciona — 3 passos do Life Planner -->
     <div class="copy-block">
-      <p>A maioria das pessoas acha que não vai precisar.<br>
-        <strong>É exatamente por isso que a família delas sofre.</strong>
-      </p>
-      <p>
-        Ninguém planeja morrer. Ninguém planeja ficar inválido.<br>
-        Mas acontece — todo dia, com pessoas que também achavam que não ia acontecer.
-      </p>
-      <p>
-        A diferença entre quem tem seguro e quem não tem não é a morte.<br>
-        <span class="accent">É o que acontece depois.</span>
-      </p>
-      <div class="compare-grid">
-        <div class="compare-card bad">
-          <div class="label">Sem seguro</div>
-          <div class="desc">Família perde a renda, perde o imóvel, perde o padrão de vida</div>
-        </div>
-        <div class="compare-card good">
-          <div class="label">Com seguro</div>
-          <div class="desc">Família recebe o dinheiro, paga as contas, mantém a vida</div>
-        </div>
-      </div>
+      <p><strong>Workflow do Life Planner em 3 passos:</strong></p>
+      <ol style="margin:18px 0 24px 24px; line-height: 1.75; color: var(--ivory-soft);">
+        <li><strong>Dados do cliente</strong> — nome, nascimento, renda, profissão. Inclua as
+          informações de saúde para evitar rejeição pela seguradora.</li>
+        <li><strong>Planejamento sugerido</strong> — abre uma tela com todas as coberturas
+          da <strong>AZOS</strong> e <strong>MAG</strong> com capital pré-preenchido pelo
+          perfil. Você marca/desmarca, edita os capitais e fecha o blend ideal.</li>
+        <li><strong>Cotação real</strong> — com um clique o sistema dispara as duas
+          seguradoras em paralelo (Playwright nos portais oficiais) e devolve os prêmios.</li>
+      </ol>
     </div>
 
     <!-- Benefícios -->
@@ -2092,12 +2190,12 @@
 
     <!-- Blend: sem trava de orçamento — o capital é calculado pela renda informada no form -->
     <div class="aviso-box" style="margin:24px 0 8px">
-      <strong>Sem teto de prêmio.</strong> O Blend calcula o capital ideal para cada cobertura a partir da
-      sua renda e idade (informados no próximo passo) — você paga pelo planejamento, não por um valor fixo.
+      <strong>Sem teto de prêmio.</strong> O Blend sugere capital para cada cobertura a partir da renda
+      anual do cliente. Na próxima tela, o Life Planner ajusta cada linha antes de disparar a cotação real.
     </div>
 
     <button class="btn-cotar" id="btnAvancar" data-anchor="cotar" onclick="avancarParaForm()" disabled>
-      Iniciar Cotação →
+      Continuar — preencher dados do cliente →
     </button>
 
   </div>
@@ -2113,9 +2211,10 @@
   <div id="badgeCobertura" style="margin-bottom:18px;text-align:center"></div>
 
   <div class="card">
-    <h2 class="card-title">Dados para Cotação</h2>
+    <h2 class="card-title">Passo 1 · Dados do cliente</h2>
     <div class="card-subtitle">
-      Preenchimento rápido — preciso e seguro. Seus dados nunca são compartilhados.
+      Preencha os dados que as seguradoras exigem. Renda e idade definem o capital sugerido
+      no próximo passo. Saúde aqui evita rejeição depois.
     </div>
 
     <form id="formCotar">
@@ -2369,18 +2468,73 @@
       </div>
 
       <button type="submit" class="btn-cotar" id="btnCotar">
-        Gerar Cotação
+        Montar planejamento →
       </button>
     </form>
   </div>
 
   <!-- Resultado -->
   <div class="card" id="resultado">
-    <h2 class="card-title">Sua Proposta</h2>
+    <h2 class="card-title">Passo 3 · Cotação real</h2>
     <div class="card-subtitle">
-      Cotação calculada · Próximos passos · Assinatura e pagamento.
+      Prêmios calculados nos portais oficiais com base no blend escolhido.
     </div>
     <div id="resConteudo"></div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════════════════
+     TELA 2 — Planejamento (Life Planner edita o blend antes de cotar)
+     ═════════════════════════════════════════════════════════════════════════ -->
+<div id="tela-planejamento" class="container" style="display:none">
+  <div class="card">
+    <h2 class="card-title">Passo 2 · Planejamento sugerido</h2>
+    <div class="card-subtitle" id="planSubtitle">
+      Carregando perfil do cliente...
+    </div>
+
+    <div class="aviso-box" style="margin-top:18px">
+      <strong>Capitais sugeridos pela renda</strong> — vida 10× renda anual, morte acidental 5×, doenças graves 3×,
+      invalidez 8-10×. Edite cada linha à vontade; desmarcando linhas, elas ficam fora da cotação.
+    </div>
+
+    <!-- AZOS — múltiplas coberturas editáveis -->
+    <div class="sec-label" style="margin-top:24px">AZOS · Coberturas individuais</div>
+    <table class="plan-table" id="azosTable">
+      <thead>
+        <tr>
+          <th style="width:42px">Ativa</th>
+          <th>Cobertura</th>
+          <th style="width:200px">Capital (R$)</th>
+          <th style="width:180px">Limites do produto</th>
+        </tr>
+      </thead>
+      <tbody id="azosTableBody"></tbody>
+    </table>
+
+    <!-- MAG — produto único de capital fixo -->
+    <div class="sec-label" style="margin-top:32px">MAG · Produto familiar</div>
+    <table class="plan-table" id="magTable">
+      <thead>
+        <tr>
+          <th style="width:42px">Ativa</th>
+          <th>Produto</th>
+          <th style="width:200px">Capital (R$)</th>
+          <th style="width:180px">Observação</th>
+        </tr>
+      </thead>
+      <tbody id="magTableBody"></tbody>
+    </table>
+
+    <div class="plan-resumo" id="planResumo"></div>
+
+    <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:28px">
+      <button type="button" class="btn-cotar-secondary" onclick="voltarParaForm()">← Voltar e editar dados</button>
+      <button type="button" class="btn-cotar" id="btnDispararCotacao" onclick="dispararCotacao()">
+        Disparar cotação real (AZOS + MAG) →
+      </button>
+    </div>
   </div>
 </div>
 
@@ -2698,22 +2852,201 @@ function startLoaderMsgs() {
 function stopLoaderMsgs() { clearInterval(loaderTimer); }
 
 // ── Submit ──────────────────────────────────────────────────────────────────
+// Estado do fluxo Life Planner
+let _planejamentoAtual = null;   // {cliente, azos:[], mag:[]}
+let _dadosFormCache    = null;   // FormData clonado do form (para reenviar no /cotar)
+
+// SUBMIT do formulário → chama /planejamento (rápido, sem Playwright)
 document.getElementById('formCotar').addEventListener('submit', async (e) => {
   e.preventDefault();
-  if (typeof fbq !== 'undefined') {
-    fbq('track', 'Lead');
-    fbq('trackCustom', 'CotacaoSolicitada', {
-      tipo_cobertura: tipoSelecionado,
-      content_name:   LABELS_COBERTURA[tipoSelecionado] || tipoSelecionado,
-    });
-  }
   const btn = document.getElementById('btnCotar');
+  btn.disabled = true;
+
+  try {
+    const fd = new FormData(e.target);
+    // Cache do form para reaproveitar no /cotar depois
+    _dadosFormCache = fd;
+
+    // /planejamento só precisa de nome, nasc, renda e tipo_cobertura
+    const planFd = new FormData();
+    planFd.append('nome',           fd.get('nome') || '');
+    planFd.append('nascimento',     fd.get('nascimento') || '');
+    planFd.append('renda_mensal',   fd.get('renda_mensal') || '0');
+    planFd.append('tipo_cobertura', fd.get('tipo_cobertura') || 'mix');
+
+    const res = await fetch('/planejamento', { method: 'POST', body: planFd });
+    if (!res.ok) throw new Error('Erro ao gerar planejamento (HTTP ' + res.status + ')');
+    _planejamentoAtual = await res.json();
+
+    renderPlanejamento(_planejamentoAtual);
+    document.getElementById('tela-form').style.display = 'none';
+    document.getElementById('tela-planejamento').style.display = 'block';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
+  } catch(err) {
+    alert('Não foi possível gerar o planejamento: ' + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+// Renderiza a grid editável do planejamento (AZOS + MAG)
+function renderPlanejamento(plan) {
+  const cli = plan.cliente || {};
+  const renda = Number(cli.renda_mensal || 0);
+  const sub = document.getElementById('planSubtitle');
+  sub.innerHTML = `
+    <strong>${cli.nome || 'Cliente'}</strong> · ${cli.idade || '?'} anos ·
+    Renda ${renda > 0 ? 'R$ ' + renda.toLocaleString('pt-BR') : 'não informada'}/mês ·
+    Foco: <em>${LABELS_COBERTURA[cli.tipo_cobertura] || cli.tipo_cobertura}</em>
+  `;
+
+  // AZOS
+  const azosBody = document.getElementById('azosTableBody');
+  azosBody.innerHTML = (plan.azos || []).map((c, i) => `
+    <tr data-row="azos-${i}" class="${c.ativo ? '' : 'inativa'}">
+      <td>
+        <input type="checkbox" data-azos-ativo="${i}" ${c.ativo ? 'checked' : ''}
+               onchange="togglePlanRow(this, 'azos', ${i})">
+      </td>
+      <td class="nome-col">
+        <strong>${c.nome}</strong>
+        <div class="desc">${c.descricao || ''}</div>
+        <span class="motivo">${c.motivo}</span>
+      </td>
+      <td>
+        <input type="number" data-azos-capital="${i}"
+               value="${c.capital_sugerido}" min="${c.min}" max="${c.max}" step="10000"
+               oninput="onPlanCapitalChange()">
+      </td>
+      <td class="limites">
+        <span class="label">Min/Max</span>
+        R$ ${Number(c.min).toLocaleString('pt-BR')} —
+        R$ ${Number(c.max).toLocaleString('pt-BR')}
+      </td>
+    </tr>
+  `).join('');
+
+  // MAG
+  const magBody = document.getElementById('magTableBody');
+  magBody.innerHTML = (plan.mag || []).map((c, i) => `
+    <tr data-row="mag-${i}" class="${c.ativo ? '' : 'inativa'}">
+      <td>
+        <input type="checkbox" data-mag-ativo="${i}" ${c.ativo ? 'checked' : ''}
+               onchange="togglePlanRow(this, 'mag', ${i})">
+      </td>
+      <td class="nome-col">
+        <strong>${c.nome}</strong>
+        <div class="desc">${c.descricao || ''}</div>
+        <span class="motivo">${c.motivo}</span>
+      </td>
+      <td>
+        <input type="number" data-mag-capital="${i}"
+               value="${c.capital_sugerido}" min="${c.min}" max="${c.max}" step="500"
+               ${c.capital_fixo ? 'disabled' : ''}>
+      </td>
+      <td class="limites">
+        ${c.capital_fixo
+          ? '<span class="label">Capital fixo</span>O produto MAG define o capital — não é editável'
+          : '<span class="label">Min/Max</span>R$ ' + Number(c.min).toLocaleString('pt-BR') + ' — R$ ' + Number(c.max).toLocaleString('pt-BR')}
+      </td>
+    </tr>
+  `).join('');
+
+  onPlanCapitalChange();
+}
+
+function togglePlanRow(chk, seg, idx) {
+  const tr = chk.closest('tr');
+  tr.classList.toggle('inativa', !chk.checked);
+  onPlanCapitalChange();
+}
+
+function onPlanCapitalChange() {
+  // Recalcula total de capital coberto entre AZOS + MAG (somente linhas ativas)
+  let total = 0, n_ativas = 0;
+  document.querySelectorAll('#azosTable tbody tr, #magTable tbody tr').forEach(tr => {
+    const chk = tr.querySelector('input[type="checkbox"]');
+    const num = tr.querySelector('input[type="number"]');
+    if (chk && chk.checked && num) {
+      total += Number(num.value) || 0;
+      n_ativas++;
+    }
+  });
+  document.getElementById('planResumo').innerHTML = `
+    <div>
+      <div class="label">Capital total segurado</div>
+      <div class="valor">${'R$ ' + total.toLocaleString('pt-BR')}</div>
+      <div class="pequeno">${n_ativas} cobertura${n_ativas === 1 ? '' : 's'} ativa${n_ativas === 1 ? '' : 's'} no blend</div>
+    </div>
+    <div style="text-align:right">
+      <div class="label">Próximo passo</div>
+      <div class="pequeno" style="max-width:280px">
+        Clique em "Disparar cotação real" para que o Blend abra os portais
+        AZOS e MAG e calcule o prêmio mensal exato.
+      </div>
+    </div>
+  `;
+}
+
+// Volta da tela-planejamento para o formulário
+function voltarParaForm() {
+  document.getElementById('tela-planejamento').style.display = 'none';
+  document.getElementById('tela-form').style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Dispara a cotação real com o blend escolhido pelo LP
+async function dispararCotacao() {
+  if (!_planejamentoAtual || !_dadosFormCache) {
+    alert('Estado do planejamento perdido. Volte para o formulário.');
+    return;
+  }
+  // Monta o blend a partir do estado atual da tabela
+  const blend = { azos: [], mag: [] };
+  (_planejamentoAtual.azos || []).forEach((c, i) => {
+    const chk = document.querySelector(`[data-azos-ativo="${i}"]`);
+    const num = document.querySelector(`[data-azos-capital="${i}"]`);
+    if (chk && chk.checked && num) {
+      blend.azos.push({
+        id: c.id,
+        nome: c.nome,
+        nome_no_azos: c.nome_no_azos,
+        capital: Number(num.value) || 0,
+        motivo: c.motivo || '',
+      });
+    }
+  });
+  (_planejamentoAtual.mag || []).forEach((c, i) => {
+    const chk = document.querySelector(`[data-mag-ativo="${i}"]`);
+    const num = document.querySelector(`[data-mag-capital="${i}"]`);
+    if (chk && chk.checked && num) {
+      blend.mag.push({
+        id: c.id,
+        codigo: c.codigo,
+        nome: c.nome,
+        nome_no_mag: c.nome_no_mag,
+        capital: Number(num.value) || 0,
+      });
+    }
+  });
+
+  if (blend.azos.length === 0 && blend.mag.length === 0) {
+    alert('Marque ao menos uma cobertura antes de disparar a cotação.');
+    return;
+  }
+
+  // Reconstitui o FormData do form original e injeta o blend
+  const fd = new FormData();
+  for (const [k, v] of _dadosFormCache.entries()) fd.append(k, v);
+  fd.set('blend', JSON.stringify(blend));
+
+  const btn = document.getElementById('btnDispararCotacao');
   btn.disabled = true;
   document.getElementById('loader').classList.add('show');
   startLoaderMsgs();
 
   try {
-    const fd  = new FormData(e.target);
     const res = await fetch('/cotar', { method: 'POST', body: fd });
     if (!res.ok) throw new Error('Erro ao iniciar cotação (HTTP ' + res.status + ')');
     const { job_id } = await res.json();
@@ -2722,7 +3055,6 @@ document.getElementById('formCotar').addEventListener('submit', async (e) => {
     window._jobId = job_id;
     window.location.hash = job_id;
     console.log('[Blend] job_id =', job_id);
-
     const dbgEl = document.getElementById('debugJobId');
     if (dbgEl) dbgEl.textContent = 'job_id · ' + job_id.slice(0, 8);
 
@@ -2734,7 +3066,7 @@ document.getElementById('formCotar').addEventListener('submit', async (e) => {
     btn.disabled = false;
     renderResultado({ erro: err.message });
   }
-});
+}
 
 async function pollJob(jobId) {
   // SSE (Server-Sent Events) — push de status sem polling. Reduz drasticamente
@@ -2753,7 +3085,11 @@ async function pollJob(jobId) {
       clearTimeout(timeoutTimer);
       stopLoaderMsgs();
       document.getElementById('loader').classList.remove('show');
-      btn.disabled = false;
+      const b1 = document.getElementById('btnCotar');           if (b1) b1.disabled = false;
+      const b2 = document.getElementById('btnDispararCotacao'); if (b2) b2.disabled = false;
+      // Sai da tela-planejamento e mostra resultado dentro da tela-form (onde o card está)
+      const tp = document.getElementById('tela-planejamento'); if (tp) tp.style.display = 'none';
+      document.getElementById('tela-form').style.display = 'block';
       if (isError) renderResultado({ erro: payload });
       else         renderResultado(payload);
       resolve();
@@ -2916,11 +3252,15 @@ function novaCotacao() {
   document.getElementById('resultado').style.display = 'none';
   document.getElementById('resultado').classList.remove('reveal');
   tipoSelecionado = null;
+  _planejamentoAtual = null;
+  _dadosFormCache = null;
   ['em_vida', 'apos_morte', 'mix'].forEach(t => {
-    document.getElementById('card-' + t).classList.remove('selecionado');
+    const card = document.getElementById('card-' + t);
+    if (card) card.classList.remove('selecionado');
   });
-  document.getElementById('btnAvancar').disabled = true;
+  const btnAv = document.getElementById('btnAvancar'); if (btnAv) btnAv.disabled = true;
   document.getElementById('tela-form').style.display = 'none';
+  document.getElementById('tela-planejamento').style.display = 'none';
   document.getElementById('tela-vsl').style.display  = 'block';
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }

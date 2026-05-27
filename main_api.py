@@ -1,12 +1,20 @@
 """
-Blend Seguros — Cotação automática AZOS + MAG (somente cotação, sem proposta).
+Blend Seguros — Ferramenta de planejamento para Life Planners.
 
-Fluxo de jobs:
-  POST /cotar         → cria job, retorna {job_id} imediatamente.
+Fluxo B2B (corretor monta o plano antes de cotar):
+
+  POST /planejamento  → recebe dados + tipo de cobertura, devolve a grid
+                        recomendada (AZOS + MAG) com capital sugerido por
+                        cobertura. Sem Playwright — resposta instantânea.
+
+  POST /cotar         → recebe blend ajustado pelo Life Planner (seleções AZOS
+                        + se inclui MAG) + dados completos + saúde, cria job
+                        e dispara Playwright sequencial (AZOS depois MAG).
+
   GET  /status/{id}   → polling até status=done/error.
-  GET  /              → UI web single-page (VSL + form + resultado).
+  GET  /              → UI single-page (3 telas: dados → planejamento → resultado).
 """
-import os, uuid, time, asyncio
+import os, uuid, time, asyncio, json
 from pathlib import Path
 from typing import Dict, Any
 from fastapi import FastAPI, Form, BackgroundTasks
@@ -18,9 +26,9 @@ load_dotenv()
 
 from automacao.azos        import fase1_dados_pessoais, fase2_selecionar_coberturas
 from automacao         import mag as mag_mod
-from automacao.recomendador import recomendar, capital_recomendado_morte
+from automacao.recomendador import planejamento_grid
 
-app   = FastAPI(title="Blend Seguros — Cotação")
+app   = FastAPI(title="Blend Seguros — Life Planner")
 _BASE = Path(__file__).parent
 
 try:
@@ -28,22 +36,21 @@ try:
 except Exception:
     pass
 
-# Jobs em memória: { job_id: {status, pct, msg, result, error, created_at} }
 _jobs: Dict[str, Dict[str, Any]] = {}
 
-# Concurrency: Railway tem RAM apertada. Rodamos AZOS e MAG SEQUENCIAIS por job.
-# Cada job consome um slot — controlamos paralelismo entre clientes via semáforo.
 _MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "1"))
 _sem: asyncio.Semaphore | None = None
 
-# Quando o usuário escolhe "em_vida" (foco em invalidez/doenças graves) reduzimos
-# o capital MAG (morte) para um piso simbólico; nos outros casos usamos o capital
-# completo recomendado pela renda (10x renda anual).
-_FATOR_MAG_POR_TIPO = {
-    "em_vida":    0.2,   # MAG complementar — 20% do recomendado
-    "apos_morte": 1.0,   # MAG entra com cobertura plena por renda
-    "mix":        0.6,   # meio termo
-}
+
+def _num(s, default=0.0):
+    try:
+        return float(str(s).replace(".", "").replace(",", ".").replace("R$", "").strip())
+    except Exception:
+        return default
+
+
+def _sim(s):
+    return str(s).strip().lower() == "sim"
 
 
 def _job_set(job_id: str, **kw):
@@ -62,8 +69,7 @@ def _cleanup_old_jobs():
 async def startup():
     global _sem
     _sem = asyncio.Semaphore(_MAX_CONCURRENT)
-    print(f"[blend] startup ok — PORT={os.getenv('PORT','8000')} MAX_CONCURRENT={_MAX_CONCURRENT}",
-          flush=True)
+    print(f"[blend] startup ok — PORT={os.getenv('PORT','8000')} MAX_CONCURRENT={_MAX_CONCURRENT}", flush=True)
 
 
 # ── Rotas básicas ────────────────────────────────────────────────────────────
@@ -86,7 +92,7 @@ async def status(job_id: str):
     return JSONResponse(job)
 
 
-# ── Debug endpoints (úteis em prod p/ entender Playwright) ───────────────────
+# ── Debug endpoints ──────────────────────────────────────────────────────────
 @app.get("/debug/screenshot/{nome}")
 async def debug_screenshot(nome: str):
     path = f"/tmp/{nome}.png"
@@ -104,10 +110,31 @@ async def debug_dump(nome: str):
     return PlainTextResponse(f"não existe: /tmp/{nome}.html|.json|.txt", status_code=404)
 
 
+# ── POST /planejamento ──────────────────────────────────────────────────────
+# Resposta instantânea (sem Playwright). LP usa pra revisar/ajustar capitais.
+@app.post("/planejamento")
+async def planejamento(
+    nome:           str = Form(...),
+    nascimento:     str = Form(...),
+    renda_mensal:   str = Form(...),
+    tipo_cobertura: str = Form("mix"),
+):
+    cliente = {
+        "nome":         nome,
+        "nascimento":   nascimento,
+        "renda_mensal": _num(renda_mensal),
+    }
+    grid = planejamento_grid(cliente, tipo_cobertura=tipo_cobertura)
+    return JSONResponse(grid)
+
+
 # ── POST /cotar ──────────────────────────────────────────────────────────────
+# Dispara Playwright com o blend final (escolhas do LP).
+# Recebe o blend serializado em JSON via field `blend` do form.
 @app.post("/cotar")
 async def cotar(
     background_tasks: BackgroundTasks,
+    # cadastro completo (necessário para o portal)
     nome:                    str = Form(...),
     nascimento:              str = Form(...),
     altura:                  str = Form("175"),
@@ -124,6 +151,7 @@ async def cotar(
     numero:                  str = Form(""),
     complemento:             str = Form(""),
     tipo_cobertura:          str = Form("mix"),
+    # saúde
     pratica_esporte_radical: str = Form("nao"),
     pilota_aviao:            str = Form("nao"),
     viaja_exterior:          str = Form("nao"),
@@ -137,21 +165,14 @@ async def cotar(
     diagnostico_renal:       str = Form("nao"),
     diagnostico_hiv:         str = Form("nao"),
     uso_drogas:              str = Form("nao"),
+    # blend final escolhido pelo LP (JSON)
+    blend:                   str = Form(...),
 ):
-    def num(s, d=0.0):
-        try:
-            return float(str(s).replace(".", "").replace(",", ".").replace("R$", "").strip())
-        except Exception:
-            return d
-
-    def sim(s):
-        return str(s).strip().lower() == "sim"
-
     cliente = {
         "nome": nome, "nascimento": nascimento,
         "altura": altura, "peso": peso, "profissao": profissao,
         "sexo": sexo, "fumante": fumante == "sim",
-        "renda_mensal": num(renda_mensal),
+        "renda_mensal": _num(renda_mensal),
         "cpf": cpf, "email": email, "telefone": telefone,
         "estado_civil": estado_civil,
         "cep": cep, "numero": numero, "complemento": complemento,
@@ -159,98 +180,139 @@ async def cotar(
     }
 
     saude = {
-        "pratica_esporte_radical": sim(pratica_esporte_radical),
-        "pilota_aviao":            sim(pilota_aviao),
-        "viaja_exterior":          sim(viaja_exterior),
-        "doenca_preexistente":     sim(doenca_preexistente),
-        "internacao_2anos":        sim(internacao_2anos),
-        "cirurgia_prevista":       sim(cirurgia_prevista),
-        "imc_acima_40":            sim(imc_acima_40),
-        "diagnostico_cancer":      sim(diagnostico_cancer),
-        "diagnostico_cardio":      sim(diagnostico_cardio),
-        "diagnostico_diabetes":    sim(diagnostico_diabetes),
-        "diagnostico_renal":       sim(diagnostico_renal),
-        "diagnostico_hiv":         sim(diagnostico_hiv),
-        "uso_drogas":              sim(uso_drogas),
+        "pratica_esporte_radical": _sim(pratica_esporte_radical),
+        "pilota_aviao":            _sim(pilota_aviao),
+        "viaja_exterior":          _sim(viaja_exterior),
+        "doenca_preexistente":     _sim(doenca_preexistente),
+        "internacao_2anos":        _sim(internacao_2anos),
+        "cirurgia_prevista":       _sim(cirurgia_prevista),
+        "imc_acima_40":            _sim(imc_acima_40),
+        "diagnostico_cancer":      _sim(diagnostico_cancer),
+        "diagnostico_cardio":      _sim(diagnostico_cardio),
+        "diagnostico_diabetes":    _sim(diagnostico_diabetes),
+        "diagnostico_renal":       _sim(diagnostico_renal),
+        "diagnostico_hiv":         _sim(diagnostico_hiv),
+        "uso_drogas":              _sim(uso_drogas),
         "_cliente":                cliente,
     }
 
+    try:
+        blend_dict = json.loads(blend)
+    except Exception:
+        return JSONResponse({"erro": "blend JSON inválido"}, status_code=400)
+
     job_id = str(uuid.uuid4())
     _jobs[job_id] = {
-        "status":     "queued",
-        "pct":        0,
-        "msg":        "Na fila...",
-        "result":     None,
-        "error":      None,
-        "created_at": time.time(),
+        "status": "queued", "pct": 0, "msg": "Na fila...",
+        "result": None, "error": None, "created_at": time.time(),
     }
     _cleanup_old_jobs()
-    background_tasks.add_task(_run_cotacao, job_id, cliente, saude)
+    background_tasks.add_task(_run_cotacao, job_id, cliente, saude, blend_dict)
     return JSONResponse({"job_id": job_id})
 
 
 # ── Worker assíncrono que executa AZOS + MAG ─────────────────────────────────
-async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
+async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
+    """
+    blend = {
+      "azos": [{"nome_no_azos": str, "capital": int, "id": str}, ...],
+      "mag":  [{"codigo": str, "nome_no_mag": str, "capital": int}, ...],
+    }
+    Linhas inativas já vieram filtradas pelo frontend.
+    """
     global _sem
     _job_set(job_id, status="queued", msg="Aguardando slot disponível...", pct=2)
 
-    async with _sem:  # garante 1 job por vez (Railway low-RAM)
-        result = {"azos": {"erro": "não rodou"}, "mag": {"erro": "não rodou"}}
-        tipo_cob = cliente.get("tipo_cobertura", "mix")
+    azos_blend = blend.get("azos") or []
+    mag_blend  = blend.get("mag")  or []
+
+    async with _sem:
+        result = {
+            "azos": {"erro": None, "premio_mensal": None, "selecoes": []},
+            "mag":  {"erro": None, "premio_mensal": None, "capital": None,
+                     "produto": None},
+        }
 
         # ── AZOS ───────────────────────────────────────────────────────────
-        try:
-            _job_set(job_id, status="running", pct=10,
-                     msg="Abrindo portal Azos e fazendo login...")
+        if azos_blend:
+            try:
+                _job_set(job_id, status="running", pct=10,
+                         msg="Abrindo portal Azos e fazendo login...")
+                fase1 = await fase1_dados_pessoais(cliente)
+                if fase1.get("erro"):
+                    result["azos"]["erro"] = fase1["erro"][:300]
+                else:
+                    _job_set(job_id, pct=35,
+                             msg="Azos: aplicando blend escolhido pelo Life Planner...")
+                    coberturas_limits = {c["nome"]: c for c in fase1["coberturas"]}
 
-            fase1 = await fase1_dados_pessoais(cliente)
-            if fase1.get("erro"):
-                result["azos"] = {"erro": fase1["erro"][:300]}
-            else:
-                _job_set(job_id, pct=30,
-                         msg="Azos: montando planejamento conforme seu perfil...")
-                coberturas_limits = {c["nome"]: c for c in fase1["coberturas"]}
-                nomes = list(coberturas_limits.keys())
-                selecoes = recomendar(cliente, nomes, tipo_cobertura=tipo_cob)
+                    # Mapeia cada linha do blend (nome_no_azos é prefixo/substring)
+                    # para o nome EXATO no portal Azos.
+                    selecoes = []
+                    nao_encontradas = []
+                    for line in azos_blend:
+                        alvo = (line.get("nome_no_azos") or "").lower()
+                        match = next(
+                            (n for n in coberturas_limits if alvo and alvo in n.lower()),
+                            None,
+                        )
+                        if not match:
+                            nao_encontradas.append(line.get("nome_no_azos"))
+                            continue
+                        lim = coberturas_limits[match]
+                        v_min = float(lim.get("valor_min") or 50_000)
+                        v_max = float(lim.get("valor_max") or 5_000_000)
+                        cap   = int(max(v_min, min(v_max, int(line.get("capital") or v_min))))
+                        selecoes.append({
+                            "nome":   match,
+                            "valor":  cap,
+                            "motivo": line.get("motivo") or "",
+                        })
+                    if nao_encontradas:
+                        print(f"[blend] AZOS coberturas não encontradas no portal: {nao_encontradas}", flush=True)
 
-                # Clampa cada cobertura aos limites reais do Azos
-                for sel in selecoes:
-                    lim = coberturas_limits.get(sel["nome"], {})
-                    v_min = float(lim.get("valor_min") or 50_000)
-                    v_max = float(lim.get("valor_max") or 5_000_000)
-                    sel["valor"] = int(max(v_min, min(v_max, sel["valor"])))
-
-                fase2 = await fase2_selecionar_coberturas(
-                    fase1["session_id"], selecoes, saude=saude,
-                    coberturas_limits=coberturas_limits,
-                    parar_cotacao=True,   # blend: ler prêmio direto da tela de coberturas
-                )
-                result["azos"] = {
-                    "premio_mensal": fase2.get("premio_mensal"),
-                    "premio_anual":  fase2.get("premio_anual"),
-                    "selecoes":      fase2.get("selecoes") or selecoes,
-                    "erro":          fase2.get("erro"),
-                }
-        except Exception as e:
-            result["azos"] = {"erro": str(e)[:300]}
+                    if not selecoes:
+                        result["azos"]["erro"] = "Nenhuma cobertura do blend bateu com o catálogo Azos"
+                    else:
+                        fase2 = await fase2_selecionar_coberturas(
+                            fase1["session_id"], selecoes, saude=saude,
+                            coberturas_limits=coberturas_limits,
+                            parar_cotacao=True,
+                        )
+                        result["azos"] = {
+                            "premio_mensal": fase2.get("premio_mensal"),
+                            "premio_anual":  fase2.get("premio_anual"),
+                            "selecoes":      fase2.get("selecoes") or selecoes,
+                            "erro":          fase2.get("erro"),
+                        }
+            except Exception as e:
+                result["azos"]["erro"] = str(e)[:300]
+        else:
+            result["azos"]["erro"] = "Nenhuma cobertura AZOS selecionada"
 
         # ── MAG ────────────────────────────────────────────────────────────
-        # Sequencial após AZOS (Railway: 2 Chromium juntos = OOM).
-        try:
-            _job_set(job_id, pct=65,
-                     msg="MAG: consultando SAF Essencial Familiar (3061)...")
-            capital_base = capital_recomendado_morte(cliente)
-            fator = _FATOR_MAG_POR_TIPO.get(tipo_cob, 0.6)
-            capital_mag = max(50_000, int(round(capital_base * fator / 10_000) * 10_000))
-            mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
-            result["mag"] = {
-                "premio_mensal": mag_out.get("premio_mensal"),
-                "capital":       mag_out.get("capital"),
-                "produto":       mag_out.get("produto"),
-                "erro":          mag_out.get("erro"),
-            }
-        except Exception as e:
-            result["mag"] = {"erro": str(e)[:300]}
+        if mag_blend:
+            try:
+                _job_set(job_id, pct=70, msg="MAG: consultando produto selecionado...")
+                # No setup atual o Blend só usa um produto MAG por job (SAF 3061).
+                # Se houver mais de uma linha, pega a primeira.
+                m_line = mag_blend[0]
+                capital_mag = int(m_line.get("capital") or 5_500)
+                nome_mag    = m_line.get("nome_no_mag") or \
+                              "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)"
+                # mag.cotar usa o nome interno do wrapper (já fixado em 3061);
+                # `capital` é só dica — o produto tem capital fixo, será lido do DOM.
+                mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
+                result["mag"] = {
+                    "premio_mensal": mag_out.get("premio_mensal"),
+                    "capital":       mag_out.get("capital"),
+                    "produto":       mag_out.get("produto") or nome_mag,
+                    "erro":          mag_out.get("erro"),
+                }
+            except Exception as e:
+                result["mag"]["erro"] = str(e)[:300]
+        else:
+            result["mag"]["erro"] = "MAG não incluída no blend"
 
         # ── Conclusão ──────────────────────────────────────────────────────
         algum_ok = (
@@ -261,13 +323,13 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict):
             job_id,
             status="done" if algum_ok else "error",
             pct=100,
-            msg="Cotação concluída!" if algum_ok else "Nenhuma cotação retornada.",
+            msg="Cotação concluída!" if algum_ok else "Nenhuma seguradora retornou prêmio.",
             result={
-                "nome":        cliente["nome"],
-                "nascimento":  cliente["nascimento"],
-                "tipo_cobertura": tipo_cob,
-                "azos":        result["azos"],
-                "mag":         result["mag"],
+                "nome":           cliente["nome"],
+                "nascimento":     cliente["nascimento"],
+                "tipo_cobertura": cliente.get("tipo_cobertura"),
+                "azos":           result["azos"],
+                "mag":            result["mag"],
             },
             error=None if algum_ok else "Ambas seguradoras falharam.",
         )

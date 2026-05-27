@@ -154,3 +154,142 @@ def capital_recomendado_morte(cliente: dict) -> int:
     renda = float(cliente.get("renda_mensal") or 0)
     idade = calcular_idade(cliente.get("nascimento", "01/01/1985"))
     return _capital_por_renda("vida", renda, idade)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Grid completa para o Life Planner — usada na tela de planejamento
+# (antes de disparar Playwright). Devolve TODAS as linhas conhecidas em ambas
+# seguradoras com capital sugerido, min/max e flag de "ativo" segundo o tipo.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Catálogo conceitual — nomes que casam por substring com o que aparece no
+# portal AZOS. Capital min/max praxe do canal corretor (Azos+ desde out/2025).
+_CATALOGO_AZOS: list[dict] = [
+    {
+        "id": "vida",
+        "nome": "Seguro de Vida (Morte Qualquer Causa)",
+        "nome_no_azos": "Seguro de vida",
+        "categoria": "apos_morte",
+        "chave_taxa": "vida",
+        "anos_renda": 10,
+        "min": 50_000,
+        "max": 3_000_000,
+        "descricao": "Indenização aos beneficiários em caso de falecimento, por qualquer causa.",
+    },
+    {
+        "id": "morte_acidental",
+        "nome": "Morte Acidental",
+        "nome_no_azos": "Morte acidental",
+        "categoria": "apos_morte",
+        "chave_taxa": "morte_acidental",
+        "anos_renda": 5,
+        "min": 50_000,
+        "max": 1_500_000,
+        "descricao": "Indenização extra quando a morte é por acidente pessoal.",
+    },
+    {
+        "id": "doencas_graves",
+        "nome": "Doenças Graves 30",
+        "nome_no_azos": "Doenças Graves",
+        "categoria": "em_vida",
+        "chave_taxa": "doencas_graves",
+        "anos_renda": 3,
+        "min": 100_000,
+        "max": 800_000,
+        "descricao": "Capital pago em vida no diagnóstico de 30 doenças graves (câncer, AVC, etc).",
+    },
+    {
+        "id": "invalidez_perm",
+        "nome": "Invalidez Permanente Total",
+        "nome_no_azos": "Invalidez Permanente",
+        "categoria": "em_vida",
+        "chave_taxa": "invalidez_perm",
+        "anos_renda": 10,
+        "min": 100_000,
+        "max": 1_000_000,
+        "descricao": "Indenização integral em caso de invalidez total e permanente (qualquer causa).",
+    },
+    {
+        "id": "invalidez_acid",
+        "nome": "Invalidez Total por Acidente (Majorada)",
+        "nome_no_azos": "Invalidez Total por Acidente",
+        "categoria": "em_vida",
+        "chave_taxa": "invalidez_acid",
+        "anos_renda": 8,
+        "min": 100_000,
+        "max": 1_000_000,
+        "descricao": "Indenização majorada quando a invalidez é por acidente pessoal.",
+    },
+]
+
+# Catálogo conceitual MAG — único produto disponível no Blend (SAF 3061).
+_CATALOGO_MAG: list[dict] = [
+    {
+        "id": "saf_3061",
+        "codigo": "3061",
+        "nome": "SAF Essencial Familiar + Pais e Sogros",
+        "nome_no_mag": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
+        "categoria": "apos_morte",
+        "capital_fixo": True,
+        "min": 5_500,
+        "max": 5_500,
+        "descricao": "Produto familiar — pacote MAG com capital fixo. Cobertura para titular + cônjuge + pais e sogros.",
+    },
+]
+
+
+def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
+    """
+    Devolve o planejamento sugerido para o Life Planner: cada cobertura conhecida
+    em AZOS e MAG com capital sugerido, flag ativo (conforme o tipo escolhido) e
+    motivo. O LP pode reordenar, ativar/desativar e ajustar capitais antes de
+    disparar a cotação real.
+    """
+    renda = float(cliente.get("renda_mensal") or 0)
+    idade = calcular_idade(cliente.get("nascimento", "01/01/1985"))
+
+    quer_em_vida    = tipo_cobertura in ("em_vida", "mix")
+    quer_apos_morte = tipo_cobertura in ("apos_morte", "mix")
+
+    azos_grid = []
+    for item in _CATALOGO_AZOS:
+        ativo = (
+            (item["categoria"] == "em_vida"    and quer_em_vida)
+            or (item["categoria"] == "apos_morte" and quer_apos_morte)
+        )
+        capital = _capital_por_renda(item["chave_taxa"], renda, idade)
+        capital = max(item["min"], min(item["max"], capital))
+        motivo = (
+            f"{item['anos_renda']}× renda anual"
+            if renda > 0 else f"Capital padrão (renda não informada)"
+        )
+        azos_grid.append({
+            **item,
+            "ativo": ativo,
+            "capital_sugerido": capital,
+            "motivo": motivo,
+        })
+
+    mag_grid = []
+    for item in _CATALOGO_MAG:
+        ativo = (
+            (item["categoria"] == "em_vida"    and quer_em_vida)
+            or (item["categoria"] == "apos_morte" and quer_apos_morte)
+        )
+        mag_grid.append({
+            **item,
+            "ativo": ativo,
+            "capital_sugerido": item["min"],  # MAG SAF 3061 = capital fixo R$ 5.500
+            "motivo": "Capital fixo do produto MAG",
+        })
+
+    return {
+        "cliente": {
+            "nome": cliente.get("nome", ""),
+            "idade": idade,
+            "renda_mensal": renda,
+            "tipo_cobertura": tipo_cobertura,
+        },
+        "azos": azos_grid,
+        "mag":  mag_grid,
+    }
