@@ -413,6 +413,16 @@ async def _benefit_ids_for(page: Page, cod: str) -> list:
 
 async def _preencher_benefit_id(page: Page, eid: str, centavos: str):
     loc = page.locator(f'#{eid}')
+    # Pula inputs desabilitados (produtos de capital fixo como SAF 3061)
+    try:
+        cls = (await loc.get_attribute("class")) or ""
+        disabled_attr = await loc.get_attribute("disabled")
+        if "is-disabled" in cls or disabled_attr is not None:
+            val_atual = await loc.input_value()
+            print(f"  benefício [{eid}] DESABILITADO (capital fixo) — valor={val_atual}", flush=True)
+            return
+    except Exception:
+        pass
     try:
         await loc.scroll_into_view_if_needed(timeout=8000)
     except Exception:
@@ -938,14 +948,62 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
         for sel in selecoes:
             await _adicionar_produto(page, sel["nome"], sel.get("valor", 0))
 
+        # Antes do CONFIRMAR, lê benefit/contribution reais dos inputs do produto
+        # (alguns produtos do MAG têm capital fixo — is-disabled — então o que
+        # tentamos "preencher" é ignorado e o valor real é o que está na tela).
+        valores_reais = await page.evaluate("""() => {
+            const out = [];
+            const benefs = document.querySelectorAll('input[id*="__benefit"]');
+            for (const b of benefs) {
+                const id = b.id;
+                const m = id.match(/product_(\\d+)__/);
+                if (!m) continue;
+                const cod = m[1];
+                const contrib = document.querySelector(`input[id="product_${cod}__coverage_0__contribution"]`)
+                             || document.querySelector(`input[id*="product_${cod}"][id*="contribution"]`);
+                out.push({
+                    codigo: cod,
+                    benefit: b.value || '',
+                    contribution: contrib ? (contrib.value || '') : '',
+                });
+            }
+            return out;
+        }""")
+        print(f"[mag] valores reais por produto: {valores_reais}", flush=True)
+
+        def _parse_brl(s):
+            import re as _re
+            m = _re.search(r'([\d.]+),(\d{2})', s or '')
+            if not m: return 0.0
+            return float(m.group(1).replace('.', '') + '.' + m.group(2))
+
         premio_total = await _confirmar_solucao(page)
-        print(f"[mag] prêmio total = R$ {premio_total:.2f}", flush=True)
+        print(f"[mag] prêmio total via CONTRIBUI: R$ {premio_total:.2f}", flush=True)
+
+        # Soma das contribuições reais (mais confiável que regex no CONTRIBUI textual)
+        soma_contrib = sum(_parse_brl(v.get("contribution","")) for v in valores_reais)
+        if soma_contrib > 0 and abs(soma_contrib - premio_total) > 0.5:
+            print(f"[mag] usando soma das contribuições reais: R$ {soma_contrib:.2f} "
+                  f"(em vez de R$ {premio_total:.2f})", flush=True)
+            premio_total = soma_contrib
 
         for sel in selecoes:
+            # Acha o capital real para esta seleção (pode ser fixo do produto)
+            cap_real = float(sel.get("valor", 0))
+            import re as _re
+            m_cod = _re.search(r'\((\d+)\)\s*$', sel.get("nome", ""))
+            if m_cod:
+                cod_alvo = m_cod.group(1)
+                for v in valores_reais:
+                    if v.get("codigo") == cod_alvo:
+                        b = _parse_brl(v.get("benefit", ""))
+                        if b > 0:
+                            cap_real = b
+                        break
             resultados.append(ResultadoCotacao(
                 seguradora="mag",
                 cobertura_nome=sel["nome"],
-                valor_capital=float(sel.get("valor", 0)),
+                valor_capital=cap_real,
                 premio_mensal=round(premio_total / max(len(selecoes), 1), 2),
                 link_proposta=page.url,
             ))
@@ -1000,6 +1058,10 @@ async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) ->
         if c.erro:
             out["erro"] = c.erro[:200]
         out["premio_mensal"] = float(c.premio_mensal) if c.premio_mensal else None
+        # Reporta o capital REAL aceito pela MAG (SAF 3061 tem capital fixo do
+        # produto — o valor que enviamos é ignorado pela seguradora).
+        if c.valor_capital and c.valor_capital > 0:
+            out["capital"] = int(c.valor_capital)
         # Falha explícita quando produto não foi encontrado / prêmio zerou silenciosamente
         if out["premio_mensal"] is None and not out.get("erro"):
             out["erro"] = "MAG não retornou prêmio — produto pode ter mudado de nome no catálogo"
