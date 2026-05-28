@@ -837,6 +837,21 @@ async def fase2_selecionar_coberturas(session_id: str, selecoes: list[dict],
                 pass
             print(f"[azos][fase2] BLEND parar_cotacao - premio={premio_bl} "
                   f"selecoes={[s['nome'][:25] for s in selecoes]}", flush=True)
+
+            # ── PERSISTÊNCIA: o Azos só salva a cotação com valor quando o
+            # corretor avança da tela de coberturas. Se fechamos aqui, o portal
+            # grava como rascunho R$ 0. Clica "Ir para o Resumo" 1x e aguarda
+            # — não preenche DPS (só queremos que o portal mantenha o valor).
+            try:
+                print(f"[azos][fase2] BLEND parar_cotacao - clicando 'Ir para o Resumo' para persistir cotação no portal...", flush=True)
+                _avancou = await _clicar_continuar(page)
+                print(f"[azos][fase2] BLEND clicou continuar: {_avancou}", flush=True)
+                await page.wait_for_timeout(5_000)   # tempo pro Azos gravar
+                await page.screenshot(path=str(_TMP / "azos_cotacao_persistida.png"), full_page=False)
+                print(f"[azos][fase2] BLEND cotação persistida em {page.url}", flush=True)
+            except Exception as e:
+                print(f"[azos][fase2] BLEND falha ao persistir (ignorando): {str(e)[:200]}", flush=True)
+
             return resultado
 
         # ── PHASE 3: protocolo do corretor para mandatórias ──────────────────
