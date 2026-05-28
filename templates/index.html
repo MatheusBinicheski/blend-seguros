@@ -483,6 +483,27 @@
     .modal-pill.term_life   { background: rgba(245,158,11,.14); color: #b45309; }
     .modal-pill.tradicional { background: rgba(148,163,184,.18); color: #475569; }
     .modal-pill.pacote_fixo { background: rgba(244,114,182,.14); color: #be185d; }
+
+    /* Header de grupo exclusivo (ex: as 3 modalidades de Morte) */
+    .comp-table tr.grupo-header td {
+      padding: 16px 20px 8px;
+      background: linear-gradient(180deg, rgba(0,184,179,.06) 0%, transparent 100%);
+      border-bottom: none;
+    }
+    .grupo-label {
+      display: inline-flex; align-items: center; gap: 10px;
+      font-size: .72rem; letter-spacing: .18em; text-transform: uppercase;
+      color: var(--primary); font-weight: 700;
+    }
+    .grupo-label::before {
+      content: ''; width: 18px; height: 1.5px; background: var(--secondary);
+    }
+    .grupo-label .badge {
+      background: var(--secondary); color: #fff;
+      font-size: .56rem; letter-spacing: .12em;
+      padding: 2px 8px; border-radius: 999px; font-weight: 700;
+      letter-spacing: .14em;
+    }
     .cap-input { display: flex; flex-direction: column; gap: 6px; max-width: 160px; }
     .cap-input input { padding: 10px 12px; text-align: right; font-weight: 700; }
     .cap-input .unidade {
@@ -1166,6 +1187,7 @@ async function carregarPlanejamento() {
       if (L.azos) L.azos.selecionado = (L.escolhido_default === 'azos') && L.ativo_default;
       if (L.mag)  L.mag.selecionado  = (L.escolhido_default === 'mag')  && L.ativo_default;
     });
+    _aplicarMutexInicial();
     renderBlendsDeOuro();
     renderTabelaComparativa();
   } catch(err) {
@@ -1244,10 +1266,21 @@ function renderTabelaComparativa() {
       ${segsAtivas.map(s => `<th class="center">${s.nome}</th>`).join('')}
     </tr>
   `;
+  let ultimoGrupo = null;
+  const totalColunas = 2 + segsAtivas.length;
   document.getElementById('compBody').innerHTML = (_planejamento.linhas || []).map((L, i) => {
+    let separador = '';
+    if (L.grupo_exclusivo && L.grupo_exclusivo !== ultimoGrupo && L.grupo_titulo) {
+      separador = `<tr class="grupo-header"><td colspan="${totalColunas}">
+        <div class="grupo-label"><span class="badge">Escolha 1</span> ${L.grupo_titulo}</div>
+      </td></tr>`;
+      ultimoGrupo = L.grupo_exclusivo;
+    } else if (!L.grupo_exclusivo) {
+      ultimoGrupo = null;
+    }
     const passo = (L.unidade === 'R$/dia') ? 10 : (L.unidade === 'R$/mês de renda') ? 100 : 10000;
     const cells = segsAtivas.map(s => `<td>${segCardHTML(i, s.id, s.nome, L, L[s.id])}</td>`).join('');
-    return `
+    return separador + `
       <tr data-row="${i}">
         <td class="comp-linha">
           <span class="tipo-tag">${(L.tipo || '').toUpperCase()}</span>
@@ -1313,10 +1346,48 @@ function toggleSegCard(linhaIdx, segId) {
   const L = _planejamento.linhas[linhaIdx];
   const info = L[segId];
   if (!info || !info.disponivel) return;
-  info.selecionado = !info.selecionado;
+  const novoEstado = !info.selecionado;
+  info.selecionado = novoEstado;
+  // Mutex por grupo_exclusivo: ligando esta linha numa seguradora, desliga as
+  // outras linhas do mesmo grupo na MESMA seguradora (ex: Morte WL/TL/TR1 da AZOS
+  // são mutuamente exclusivas — o cliente escolhe UMA modalidade por seguradora).
+  if (novoEstado && L.grupo_exclusivo) {
+    (_planejamento.linhas || []).forEach((other, j) => {
+      if (j === linhaIdx) return;
+      if (other.grupo_exclusivo !== L.grupo_exclusivo) return;
+      const otherInfo = other[segId];
+      if (otherInfo && otherInfo.selecionado) {
+        otherInfo.selecionado = false;
+        const otherCard = document.querySelector(`[data-segcard="${j}-${segId}"]`);
+        if (otherCard) otherCard.classList.remove('selecionado');
+      }
+    });
+  }
   const card = document.querySelector(`[data-segcard="${linhaIdx}-${segId}"]`);
   if (card) card.classList.toggle('selecionado', info.selecionado);
   recalcularResumo();
+}
+
+// Garante que, dentro de um grupo exclusivo (ex: Morte WL/TL/TR1), apenas UMA
+// modalidade venha pré-selecionada por seguradora. Sem isso, todas as 3 vêm
+// marcadas pelo escolhido_default e o blend fica caro demais.
+function _aplicarMutexInicial() {
+  if (!_planejamento) return;
+  const grupos = {};
+  (_planejamento.linhas || []).forEach((L, i) => {
+    if (!L.grupo_exclusivo) return;
+    grupos[L.grupo_exclusivo] = grupos[L.grupo_exclusivo] || [];
+    grupos[L.grupo_exclusivo].push({L, i});
+  });
+  Object.values(grupos).forEach(itens => {
+    ['azos','mag'].forEach(seg => {
+      const candidatos = itens.filter(({L}) => L[seg] && L[seg].selecionado);
+      if (candidatos.length <= 1) return;
+      // Mantém a modalidade mais barata; desmarca as demais
+      candidatos.sort((a, b) => Number(a.L[seg].premio_estimado || 0) - Number(b.L[seg].premio_estimado || 0));
+      candidatos.slice(1).forEach(({L}) => { L[seg].selecionado = false; });
+    });
+  });
 }
 
 function _recalcPremio(info, capital) {
