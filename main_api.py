@@ -26,7 +26,7 @@ load_dotenv()
 
 from automacao.azos        import fase1_dados_pessoais, fase2_selecionar_coberturas
 from automacao         import mag as mag_mod
-from automacao.recomendador import planejamento_grid
+from automacao.recomendador import planejamento_grid, blends_de_ouro
 
 app   = FastAPI(title="Blend Seguros — Life Planner")
 _BASE = Path(__file__).parent
@@ -136,17 +136,32 @@ async def debug_dump(nome: str):
 # Resposta instantânea (sem Playwright). LP usa pra revisar/ajustar capitais.
 @app.post("/planejamento")
 async def planejamento(
-    nome:           str = Form(...),
-    nascimento:     str = Form(...),
-    renda_mensal:   str = Form(...),
-    tipo_cobertura: str = Form("mix"),
+    nome:           str  = Form(...),
+    nascimento:     str  = Form(...),
+    renda_mensal:   str  = Form(...),
+    tipo_cobertura: str  = Form("mix"),
+    altura:         str  = Form("175"),
+    peso:           str  = Form("80"),
+    fumante:        str  = Form("nao"),
+    profissao:      str  = Form(""),
+    estado_civil:   str  = Form("solteiro"),
+    med_continuo:   str  = Form("nao"),
+    tem_dependentes:str  = Form(""),
 ):
     cliente = {
-        "nome":         nome,
-        "nascimento":   nascimento,
-        "renda_mensal": _num(renda_mensal),
+        "nome":           nome,
+        "nascimento":     nascimento,
+        "renda_mensal":   _num(renda_mensal),
+        "altura":         _num(altura, 175),
+        "peso":           _num(peso, 80),
+        "fumante":        fumante,
+        "profissao":      profissao,
+        "estado_civil":   estado_civil,
+        "med_continuo":   med_continuo,
+        "tem_dependentes": bool(tem_dependentes),
     }
     grid = planejamento_grid(cliente, tipo_cobertura=tipo_cobertura)
+    grid["blends_de_ouro"] = blends_de_ouro(cliente)
     return JSONResponse(grid)
 
 

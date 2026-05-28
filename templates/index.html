@@ -345,6 +345,82 @@
       background: var(--light-gray); color: var(--text-mute);
     }
 
+    /* ── Blend de Ouro presets ──────────────────────────────────────────── */
+    .blend-ouro-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px; margin-top: 6px;
+    }
+    .blend-ouro-card {
+      position: relative;
+      padding: 18px 20px 16px;
+      border: 1.5px solid var(--border-strong);
+      border-radius: var(--radius-lg);
+      cursor: pointer;
+      background: var(--bg);
+      transition: all .18s;
+      display: flex; flex-direction: column; gap: 8px;
+    }
+    .blend-ouro-card:hover {
+      border-color: var(--primary);
+      box-shadow: var(--shadow-md);
+      transform: translateY(-2px);
+    }
+    .blend-ouro-card.match {
+      border-color: var(--secondary);
+      background: linear-gradient(135deg, #f7fdfd 0%, #fff 100%);
+      box-shadow: 0 0 0 1px var(--secondary), var(--shadow-soft);
+    }
+    .blend-ouro-card.aplicado {
+      border-color: var(--primary);
+      background: linear-gradient(135deg, #f7f5fc 0%, #fff 100%);
+      box-shadow: 0 0 0 1px var(--primary), var(--shadow-md);
+    }
+    .blend-ouro-card .badge-match {
+      position: absolute; top: -10px; left: 14px;
+      background: var(--secondary); color: #fff;
+      font-size: .56rem; letter-spacing: .18em;
+      text-transform: uppercase; font-weight: 800;
+      padding: 4px 11px; border-radius: 999px;
+      box-shadow: 0 4px 12px rgba(0,184,179,.3);
+    }
+    .blend-ouro-card .nome {
+      font-family: 'Playfair Display', serif;
+      font-size: 1.15rem; font-weight: 800;
+      color: var(--text-strong);
+      line-height: 1.2;
+    }
+    .blend-ouro-card .perfil {
+      font-size: .68rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--secondary-dk); font-weight: 700;
+    }
+    .blend-ouro-card .desc {
+      font-size: .82rem; color: var(--text);
+      line-height: 1.45;
+    }
+    .blend-ouro-card .resumo-linhas {
+      display: flex; flex-wrap: wrap; gap: 4px;
+      margin-top: 4px;
+    }
+    .blend-ouro-card .linha-chip {
+      font-size: .58rem; letter-spacing: .08em; text-transform: uppercase;
+      font-weight: 700;
+      padding: 2px 7px; border-radius: 999px;
+      background: var(--light-gray); color: var(--text-mute);
+    }
+    .blend-ouro-card .linha-chip.azos { background: rgba(44,28,80,.1); color: var(--primary); }
+    .blend-ouro-card .linha-chip.mag  { background: rgba(0,184,179,.12); color: var(--secondary-dk); }
+    .blend-ouro-card .razoes {
+      font-size: .7rem; color: var(--text-mute); font-style: italic;
+      margin-top: 2px;
+    }
+    .blend-ouro-card .razoes::before { content: '✓ '; color: var(--secondary); font-style: normal; font-weight: 700; }
+    .blend-ouro-card .acao {
+      font-size: .72rem; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--primary); font-weight: 700;
+      margin-top: 6px;
+    }
+    .blend-ouro-card.aplicado .acao::after { content: ' ✓'; }
+
     /* Tabela comparativa */
     .comp-wrap {
       background: var(--bg);
@@ -835,6 +911,14 @@
     </div>
     <div class="seg-grid" id="segPickGrid"></div>
 
+    <div class="card-section-title">Blends de Ouro <small style="text-transform:none;letter-spacing:0;color:var(--text-mute);font-weight:400">— presets recomendados pelo perfil</small></div>
+    <div class="alerta-info">
+      Clique em um preset para aplicar de uma vez as escolhas de seguradora por linha.
+      Você ainda pode ajustar individualmente depois. Os marcados com <strong>★</strong>
+      casam com o perfil deste cliente.
+    </div>
+    <div class="blend-ouro-grid" id="blendOuroGrid"></div>
+
     <div class="card-section-title">Tabela comparativa por linha</div>
     <div class="alerta-info">
       Cada linha é uma cobertura conceitual. Edite o capital e clique no card da seguradora para
@@ -1064,11 +1148,15 @@ async function carregarPlanejamento() {
   document.getElementById('planSubtitle').innerHTML =
     `<strong>${form.nome.value}</strong> · Renda <strong>R$ ${_toNum(form.renda_mensal.value).toLocaleString('pt-BR')}</strong>/mês · Foco <em>${tc}</em>`;
 
+  // Envia campos relevantes para auto-match dos Blends de Ouro
   const planFd = new FormData();
-  planFd.append('nome', form.nome.value);
-  planFd.append('nascimento', form.nascimento.value);
-  planFd.append('renda_mensal', form.renda_mensal.value);
+  ['nome','nascimento','renda_mensal','altura','peso','fumante','profissao','estado_civil','med_continuo'].forEach(k => {
+    planFd.append(k, form[k] ? form[k].value : '');
+  });
   planFd.append('tipo_cobertura', tc);
+  const tem_deps = document.querySelectorAll('#dep-list .dep-item').length > 0
+    && [...document.querySelectorAll('#dep-list input')].some(i => i.value.trim());
+  planFd.append('tem_dependentes', tem_deps ? 'sim' : '');
 
   try {
     const res = await fetch('/planejamento', { method: 'POST', body: planFd });
@@ -1078,10 +1166,67 @@ async function carregarPlanejamento() {
       if (L.azos) L.azos.selecionado = (L.escolhido_default === 'azos') && L.ativo_default;
       if (L.mag)  L.mag.selecionado  = (L.escolhido_default === 'mag')  && L.ativo_default;
     });
+    renderBlendsDeOuro();
     renderTabelaComparativa();
   } catch(err) {
     alert('Erro carregando planejamento: ' + err.message);
   }
+}
+
+// ── Blends de Ouro ─────────────────────────────────────────────────────────
+let _blendOuroAplicado = null;
+
+function renderBlendsDeOuro() {
+  const blends = (_planejamento && _planejamento.blends_de_ouro) || [];
+  const grid = document.getElementById('blendOuroGrid');
+  grid.innerHTML = blends.map(b => {
+    // Resumo de quais linhas/seguradoras o preset usa
+    const chips = Object.entries(b.linhas || {})
+      .filter(([_, seg]) => seg)
+      .map(([linhaId, seg]) => {
+        const L = (_planejamento.linhas || []).find(l => l.id === linhaId);
+        const nome = L ? (L.nome.split('—')[0] || L.nome).trim() : linhaId;
+        return `<span class="linha-chip ${seg}">${nome.slice(0,18)}: ${seg.toUpperCase()}</span>`;
+      }).join('');
+    const matchCls = b.aplicavel ? ' match' : '';
+    const aplCls = _blendOuroAplicado === b.id ? ' aplicado' : '';
+    const razoes = (b.razoes || []).join(' · ');
+    return `
+      <div class="blend-ouro-card${matchCls}${aplCls}" data-blend="${b.id}" onclick="aplicarBlendDeOuro('${b.id}')">
+        ${b.aplicavel ? '<span class="badge-match">★ Sugerido</span>' : ''}
+        <div class="perfil">${b.perfil}</div>
+        <div class="nome">${b.nome}</div>
+        <div class="desc">${b.descricao}</div>
+        ${chips ? `<div class="resumo-linhas">${chips}</div>` : ''}
+        ${razoes && b.aplicavel ? `<div class="razoes">${razoes}</div>` : ''}
+        <div class="acao">${_blendOuroAplicado === b.id ? 'Aplicado' : 'Clique para aplicar'}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+function aplicarBlendDeOuro(blendId) {
+  const blends = (_planejamento && _planejamento.blends_de_ouro) || [];
+  const blend = blends.find(b => b.id === blendId);
+  if (!blend) return;
+
+  // Garante que as duas seguradoras estejam ativas se o preset usa ambas
+  const usaAzos = Object.values(blend.linhas).includes('azos');
+  const usaMag  = Object.values(blend.linhas).includes('mag');
+  if (usaAzos && !_seguradorasAtivas.includes('azos')) _seguradorasAtivas.push('azos');
+  if (usaMag  && !_seguradorasAtivas.includes('mag'))  _seguradorasAtivas.push('mag');
+  renderSegPickGrid();
+
+  // Aplica seleções: para cada linha do preset, marca o checkbox da seguradora
+  (_planejamento.linhas || []).forEach(L => {
+    const escolha = blend.linhas[L.id];  // 'azos' | 'mag' | undefined/null
+    if (L.azos) L.azos.selecionado = (escolha === 'azos');
+    if (L.mag)  L.mag.selecionado  = (escolha === 'mag');
+  });
+
+  _blendOuroAplicado = blendId;
+  renderBlendsDeOuro();
+  renderTabelaComparativa();
 }
 
 function _fmtCap(linha, valor) {

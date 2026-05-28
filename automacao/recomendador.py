@@ -563,3 +563,335 @@ def recomendar(cliente: dict, coberturas_disponiveis: list[str],
             "motivo": f"{L['nome']}",
         })
     return selecoes
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BLEND DE OURO — presets de planejamento por perfil de cliente
+#
+# Baseado no material "Montando um Blend v2" (Stoa/Vida Stoa), p.20-22.
+# Cada preset define qual(is) seguradora(s) cobre(m) cada linha do catálogo.
+# A função `blends_de_ouro(cliente)` devolve apenas os presets que CASAM com
+# o perfil do cliente (auto-match por idade, IMC, fumante, profissão e
+# dependentes), em ordem de prioridade.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Configuração por linha do catálogo. Cada valor indica quais seguradoras
+# entram no blend daquela linha para o preset:
+#   None      → linha não entra no blend (fica desligada)
+#   "azos"    → só AZOS
+#   "mag"     → só MAG
+#   "ambos"   → AZOS + MAG combinados (apenas onde fizer sentido)
+
+_BLENDS_OURO_DEFS: list[dict] = [
+    # ── Perfil 1: Cliente jovem saudável — força em "em vida" + Term Life ──
+    {
+        "id": "ate50_saudavel",
+        "nome": "Até 50 · Saudável",
+        "descricao": "Cliente jovem, IMC bom, não fumante. Custo eficiente: Term Life na morte + invalidez/DG/cirurgias na AZOS + SAF na MAG.",
+        "perfil": "Até 50 anos · IMC normal · Não fumante",
+        "condicoes": {"idade_max": 50, "imc_max": 30, "fumante": False},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      "azos",
+            "morte_tradicional":    None,
+            "morte_acidental":      "azos",
+            "invalidez_permanente": "azos",
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   "azos",
+            "funeral":              None,
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 2: Acima 50 — Whole Life para previsibilidade ──
+    {
+        "id": "acima50_saudavel",
+        "nome": "Acima de 50 · Saudável",
+        "descricao": "Cliente maduro saudável. Whole Life MAG na base (vitalício nivelado, sem reajuste etário) + invalidez/DG na AZOS.",
+        "perfil": "Acima de 50 anos · IMC normal · Não fumante",
+        "condicoes": {"idade_min": 50, "idade_max": 64, "imc_max": 30, "fumante": False},
+        "linhas": {
+            "morte_whole_life":     "mag",
+            "morte_term_life":      None,
+            "morte_tradicional":    None,
+            "morte_acidental":      "azos",
+            "invalidez_permanente": "azos",
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   None,
+            "funeral":              None,
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 3: Fumante / IMC alto — risco maior, foco em essencial ──
+    {
+        "id": "fumante_imc_alto",
+        "nome": "Fumante / IMC alto",
+        "descricao": "Perfil de risco mais elevado. Tradicional barata na morte + invalidez por acidente + cirurgias. Sem DG (custo alto).",
+        "perfil": "Qualquer idade · IMC alto OU fumante",
+        "condicoes": {"_qualquer": ["fumante:sim", "imc_min:30"]},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      None,
+            "morte_tradicional":    "azos",
+            "morte_acidental":      "azos",
+            "invalidez_permanente": None,
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       None,
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   None,
+            "funeral":              "azos",
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 4: Sucessão empresarial/familiar — alta renda, capital grande ──
+    {
+        "id": "sucessao",
+        "nome": "Sucessão Empresarial/Familiar",
+        "descricao": "Foco em capital de morte para sucessão. Whole Life MAG com capital alto (R$ 5MM+) + complementos AZOS.",
+        "perfil": "Sucessão · Saudável · IMC normal · Não fumante",
+        "condicoes": {"idade_max": 70, "imc_max": 30, "fumante": False, "renda_min": 30_000},
+        "linhas": {
+            "morte_whole_life":     "mag",
+            "morte_term_life":      None,
+            "morte_tradicional":    "azos",
+            "morte_acidental":      "azos",
+            "invalidez_permanente": "azos",
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   None,
+            "funeral":              None,
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 5: Até 65 com doença crônica ──
+    {
+        "id": "doente_cronico",
+        "nome": "Até 65 · Hipertenso/Diabético",
+        "descricao": "Condição crônica controlada. Tradicional + invalidez por acidente + cirurgias. DG sujeito a aceitação.",
+        "perfil": "Até 65 anos · Hipertenso ou diabético · IMC bom · Não fumante",
+        "condicoes": {"idade_max": 65, "med_continuo": True, "fumante": False},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      None,
+            "morte_tradicional":    "azos",
+            "morte_acidental":      "azos",
+            "invalidez_permanente": None,
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   None,
+            "funeral":              None,
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 6: Solteiro sem filhos — foco em "em vida" ──
+    {
+        "id": "solteiro_sem_filhos",
+        "nome": "Solteiro sem filhos",
+        "descricao": "Sem dependentes financeiros. Foco total em proteção 'em vida' (invalidez, DG, DIH, cirurgias). Capital de morte mínimo.",
+        "perfil": "Até 65 · Solteiro · Sem filhos · Saudável",
+        "condicoes": {"idade_max": 65, "fumante": False, "sem_dependentes": True},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      None,
+            "morte_tradicional":    None,
+            "morte_acidental":      "azos",
+            "invalidez_permanente": "azos",
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   "azos",
+            "funeral":              "azos",
+            "saf_familiar":         None,
+        },
+    },
+
+    # ── Perfil 7: Acima 65 sem saúde — proteção mínima ──
+    {
+        "id": "idoso_sem_saude",
+        "nome": "Acima de 65 · Sem saúde",
+        "descricao": "Idade avançada com saúde comprometida. Foco em SAF familiar + funeral. Sem DG/IPT (não aceitam).",
+        "perfil": "Acima 65 · Sem saúde · IMC e tabagismo irrelevantes",
+        "condicoes": {"idade_min": 65},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      None,
+            "morte_tradicional":    "azos",
+            "morte_acidental":      "azos",
+            "invalidez_permanente": None,
+            "invalidez_acidente":   None,
+            "doencas_graves":       None,
+            "cirurgias":            None,
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   None,
+            "funeral":              "azos",
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 8: Profissões diferenciadas (médicos/dentistas) ──
+    {
+        "id": "profissoes_diferenciadas",
+        "nome": "Profissões diferenciadas",
+        "descricao": "Médicos e dentistas têm IPTA Médicos + DG Top na AZOS (taxas reduzidas). Blend completo.",
+        "perfil": "Até 65 · Médico, Dentista ou Engenheiro",
+        "condicoes": {"idade_max": 65, "profissao_match": r"m[eé]dico|dentista|engenheir|advogad"},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      "azos",
+            "morte_tradicional":    None,
+            "morte_acidental":      "azos",
+            "invalidez_permanente": "azos",
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       "azos",
+            "cirurgias":            "azos",
+            "internacao_hospitalar":"azos",
+            "renda_incapacidade":   "azos",
+            "funeral":              None,
+            "saf_familiar":         "mag",
+        },
+    },
+
+    # ── Perfil 9: Orçamento curto ──
+    {
+        "id": "orcamento_curto",
+        "nome": "Orçamento curto",
+        "descricao": "Cobertura mínima essencial: Term Life curto + invalidez por acidente + cirurgias.",
+        "perfil": "Até 65 · Orçamento limitado",
+        "condicoes": {"idade_max": 65, "renda_max": 8_000},
+        "linhas": {
+            "morte_whole_life":     None,
+            "morte_term_life":      "azos",
+            "morte_tradicional":    None,
+            "morte_acidental":      "azos",
+            "invalidez_permanente": None,
+            "invalidez_acidente":   "azos",
+            "doencas_graves":       None,
+            "cirurgias":            None,
+            "internacao_hospitalar":None,
+            "renda_incapacidade":   None,
+            "funeral":              None,
+            "saf_familiar":         None,
+        },
+    },
+]
+
+
+def _calcular_imc(cliente: dict) -> float:
+    try:
+        altura_cm = float(cliente.get("altura") or 0)
+        peso_kg   = float(cliente.get("peso")   or 0)
+        if altura_cm <= 0 or peso_kg <= 0:
+            return 0.0
+        return round(peso_kg / ((altura_cm / 100.0) ** 2), 1)
+    except Exception:
+        return 0.0
+
+
+def _eh_fumante(cliente: dict) -> bool:
+    v = cliente.get("fumante", "")
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("sim", "true", "1", "yes")
+
+
+def _avalia_condicao(blend: dict, cliente: dict) -> tuple[bool, list[str]]:
+    """Retorna (combina, razões). Razões explicam por que casou ou não."""
+    import re as _re
+    cond = blend.get("condicoes", {}) or {}
+    razoes = []
+    idade = calcular_idade(cliente.get("nascimento", "01/01/1985"))
+    imc   = _calcular_imc(cliente)
+    fumante = _eh_fumante(cliente)
+    profissao = str(cliente.get("profissao", "")).lower()
+    renda  = float(cliente.get("renda_mensal") or 0)
+    med_continuo = str(cliente.get("med_continuo", "nao")).lower() == "sim"
+    sem_deps = not bool(cliente.get("tem_dependentes")) and \
+               str(cliente.get("estado_civil","solteiro")).lower() == "solteiro"
+
+    ok = True
+    if "idade_max" in cond:
+        if idade > cond["idade_max"]: ok = False
+        else: razoes.append(f"≤{cond['idade_max']} anos")
+    if "idade_min" in cond:
+        if idade < cond["idade_min"]: ok = False
+        else: razoes.append(f"≥{cond['idade_min']} anos")
+    if "imc_max" in cond:
+        if imc > cond["imc_max"]: ok = False
+        elif imc > 0: razoes.append(f"IMC {imc} (≤{cond['imc_max']})")
+    if "imc_min" in cond:
+        if imc < cond["imc_min"]: ok = False
+        elif imc > 0: razoes.append(f"IMC {imc} (≥{cond['imc_min']})")
+    if "fumante" in cond:
+        if fumante != cond["fumante"]: ok = False
+        else: razoes.append("fumante" if fumante else "não fumante")
+    if "profissao_match" in cond:
+        if not _re.search(cond["profissao_match"], profissao): ok = False
+        else: razoes.append(f"profissão {profissao}")
+    if "renda_min" in cond:
+        if renda < cond["renda_min"]: ok = False
+        else: razoes.append(f"renda ≥ R$ {cond['renda_min']:,}".replace(",","."))
+    if "renda_max" in cond:
+        if renda > cond["renda_max"]: ok = False
+        else: razoes.append(f"renda ≤ R$ {cond['renda_max']:,}".replace(",","."))
+    if cond.get("med_continuo") is True and not med_continuo:
+        ok = False
+    elif cond.get("med_continuo"):
+        razoes.append("uso contínuo de medicamento")
+    if cond.get("sem_dependentes") is True and not sem_deps:
+        ok = False
+    elif cond.get("sem_dependentes"):
+        razoes.append("sem dependentes")
+
+    # Condição especial: "_qualquer" — basta UM dos itens bater (OR)
+    if "_qualquer" in cond:
+        any_ok = False
+        for item in cond["_qualquer"]:
+            chave, _, val = item.partition(":")
+            if chave == "fumante" and fumante and val == "sim": any_ok = True
+            elif chave == "imc_min" and imc >= float(val or 0): any_ok = True
+        if not any_ok: ok = False
+        else: razoes.append("perfil de risco (fumante ou IMC alto)")
+
+    return ok, razoes
+
+
+def blends_de_ouro(cliente: dict) -> list[dict]:
+    """
+    Devolve os Blends de Ouro aplicáveis ao perfil do cliente, em ordem de
+    prioridade (perfis mais específicos primeiro). Cada item tem:
+      - id, nome, descricao, perfil (display)
+      - linhas: {linha_id: 'azos'|'mag'|None}
+      - aplicavel (bool)
+      - razoes ([str] explicação de por que combina)
+    """
+    out = []
+    for blend in _BLENDS_OURO_DEFS:
+        aplicavel, razoes = _avalia_condicao(blend, cliente)
+        out.append({
+            "id":         blend["id"],
+            "nome":       blend["nome"],
+            "descricao":  blend["descricao"],
+            "perfil":     blend["perfil"],
+            "linhas":     blend["linhas"],
+            "aplicavel":  aplicavel,
+            "razoes":     razoes,
+        })
+    # Aplicáveis primeiro
+    out.sort(key=lambda b: (0 if b["aplicavel"] else 1, b["id"]))
+    return out
