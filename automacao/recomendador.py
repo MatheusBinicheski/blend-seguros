@@ -7,9 +7,16 @@ Cirurgias, Assistência Funeral etc.) — para cada linha, AZOS e MAG aparecem
 lado a lado com prêmio estimado. O Life Planner edita o capital sugerido e
 escolhe qual seguradora cobre cada linha para montar o blend final.
 
-Taxas (R$/mês por R$1.000 de capital) calibradas a partir de cotações reais
-e de ajuste por idade (~+40% a cada 10 anos acima de 35) — depois substituídas
-pelos prêmios reais quando a pré-simulação Playwright for executada.
+Catálogo calibrado pelo material "Montando um Blend v2" (Stoa, 2025/2026):
+  - Morte: AZOS só tem Tradicional (TR1); MAG tem Term Life e Whole Life nivelados.
+  - DG: AZOS DG13/DG30; MAG Plus (10d) / Premium (28d).
+  - DIH: AZOS R$51,30/1k diária; MAG R$64,68/1k.
+  - SAF MAG: 3 tiers com capital fixo (Essencial 5.5k / Plus 10k / Premium 15k).
+
+Taxas (R$/mês por R$1.000 de capital) calibradas a partir das tabelas do PDF
+para perfil-base (homem 33a, não fumante) e do fator idade (+40% a cada 10
+anos acima de 35) — substituídas pelos prêmios reais quando a pré-simulação
+Playwright for executada.
 """
 from datetime import date
 
@@ -83,85 +90,26 @@ def _premio_linha(seg_info: dict, capital: int, idade: int) -> float | None:
 #       "taxa"        → taxa R$/R$1k/mês (calibrada com observações reais)
 #       "fixo"        → produto com capital/prêmio fixo
 #       "por_unidade" → taxa direta sobre o capital (DIH/RIT — R$/dia ou R$/mês)
-#   azos/mag.fonte → "calibrada" (observada em cotação real) ou "estimada"
+#   azos/mag.capital_fixo → quando presente, força o capital aplicado para esse valor
+#       (UI esconde o slider/input). Usado em SAF MAG e Funeral AZOS.
+#   azos/mag.fonte → "calibrada" (observada em cotação real ou PDF v2) ou "estimada"
 # ──────────────────────────────────────────────────────────────────────────────
 _LINHAS_COMPARATIVAS: list[dict] = [
-    # ──────────────────────────────────────────────────────────────────────────
-    # MORTE — 3 linhas distintas para o LP escolher a modalidade ideal:
-    #   (1) Whole Life — vitalício nivelado (Private MAG é o produto líder)
-    #   (2) Term Life — nivelado por prazo (Vida Segura AZOS / Private TL MAG)
-    #   (3) Tradicional — Especialista AZOS (reajusta com idade, mais barato hoje)
-    # ──────────────────────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # MORTE — 3 modalidades. AZOS só tem Tradicional (TR1); Whole Life e
+    # Term Life nivelados são MAG (também há no mercado: Icatu, Omint,
+    # Centauro, MetLife, Prudential — mas só MAG está cotável aqui).
+    # ──────────────────────────────────────────────────────────────────────
 
-    # ── 1) MORTE — WHOLE LIFE (vitalício prêmio nivelado) ─────────────────
-    {
-        "id": "morte_whole_life",
-        "nome": "Morte — Whole Life (vitalício nivelado)",
-        "tipo": "morte",
-        "modalidade": "whole_life",
-        "grupo_exclusivo": "morte",
-        "grupo_titulo": "Cobertura de Morte — escolha 1 modalidade por seguradora",
-        "descricao": "Vitalício com prêmio fixo a vida toda. Ideal para sucessão patrimonial e clientes de alta renda.",
-        "anos_renda": 10,
-        "capital_min": 100_000, "capital_max": 25_000_000,
-        "azos": {
-            "disponivel": False,
-            "modalidade": "whole_life",
-            "obs": "AZOS Especialista é Tradicional (reajusta com idade) — sem Whole Life nivelado puro.",
-        },
-        "mag": {
-            "disponivel": True,
-            "produto": "Private Solutions · Whole Life Sucessão (3108-3113)",
-            "nome_no_portal": "WHOLE LIFE SUCESSAO",
-            "susep": "15414.901244/2024",
-            "modalidade": "whole_life",
-            "modelo_preco": "taxa", "taxa": 0.55,
-            "min": 1_000_000, "max": 25_000_000,
-            "fonte": "estimada",
-            "obs": "Vitalício, prêmio nivelado fixo. Capital de R$1MM a R$25MM. Idade 25-70.",
-        },
-    },
-
-    # ── 2) MORTE — TERM LIFE NIVELADO (prêmio fixo por 10/15/20/30 anos) ──
-    {
-        "id": "morte_term_life",
-        "nome": "Morte — Term Life (nivelado 20 anos)",
-        "tipo": "morte",
-        "modalidade": "term_life",
-        "grupo_exclusivo": "morte",
-        "descricao": "Prêmio fixo por prazo definido (ex: 20 anos), termina a vigência ao fim do prazo. Custo até 60% menor que Tradicional.",
-        "anos_renda": 10,
-        "capital_min": 100_000, "capital_max": 10_000_000,
-        "azos": {
-            "disponivel": True,
-            "produto": "Vida Segura (Term Life)",
-            "nome_no_portal": "Vida Segura",
-            "modalidade": "term_life",
-            "modelo_preco": "taxa", "taxa": 0.16,
-            "min": 60_000, "max": 3_000_000,
-            "fonte": "estimada",
-            "obs": "Prêmio nivelado por 20 anos; mínimo R$60k. VS5 mais caro. Aceita troca p/ vitalício.",
-        },
-        "mag": {
-            "disponivel": True,
-            "produto": "Private Solutions · Term Life",
-            "nome_no_portal": "TERM LIFE",
-            "modalidade": "term_life",
-            "modelo_preco": "taxa", "taxa": 0.19,
-            "min": 100_000, "max": 10_000_000,
-            "fonte": "estimada",
-            "obs": "Term Life com saldamento. Muito competitivo p/ sexo feminino. Permite mudança p/ vitalício.",
-        },
-    },
-
-    # ── 3) MORTE — TRADICIONAL (Especialista AZOS, reajusta com idade) ────
+    # ── MORTE — TRADICIONAL (TR1, reajuste etário) ──────────────────────
     {
         "id": "morte_tradicional",
-        "nome": "Morte — Tradicional (reajuste etário)",
+        "nome": "Morte — Tradicional (TR1, reajuste etário)",
         "tipo": "morte",
         "modalidade": "tradicional",
         "grupo_exclusivo": "morte",
-        "descricao": "Vitalício com renovação anual e reajuste por idade. Custo inicial menor, mas sobe com o tempo. Maior comissão recorrente.",
+        "grupo_titulo": "Cobertura de Morte — escolha 1 modalidade por seguradora",
+        "descricao": "Vitalício com renovação anual e reajuste por idade. Custo inicial menor, mas sobe com o tempo. Hoje a melhor tabela de TR1 é da AZOS.",
         "anos_renda": 10,
         "capital_min": 50_000, "capital_max": 3_000_000,
         "azos": {
@@ -173,15 +121,68 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.17,
             "min": 50_000, "max": 3_000_000,
             "fonte": "calibrada",
-            "obs": "Taxa do ano 1 (~R$ 209/1MM/mês p/ homem 33a no PDF Blend v2; ~R$ 199/1,2MM p/ 36a na cotação real). Reajusta com idade.",
+            "obs": "Taxa ano 1 (~R$104,67/MM p/ 33a no PDF v2; R$199/1,2MM p/ 36a na cotação real). Reajusta com idade.",
         },
         "mag": {
             "disponivel": False,
-            "obs": "MAG não tem tradicional puro no portal — oferece Whole Life ou Term Life.",
+            "obs": "MAG tem Vida Inteira tradicional, mas no canal corretor prioriza Whole Life e Term Life nivelados.",
         },
     },
 
-    # ── 2) MORTE ACIDENTAL ──────────────────────────────────────────────────
+    # ── MORTE — TERM LIFE (prêmio nivelado por prazo) ─────────────────────
+    {
+        "id": "morte_term_life",
+        "nome": "Morte — Term Life (nivelado por prazo 10/15/20/30 anos)",
+        "tipo": "morte",
+        "modalidade": "term_life",
+        "grupo_exclusivo": "morte",
+        "descricao": "Prêmio fixo por prazo definido. Termina a vigência ao fim do prazo. Maior previsibilidade para o cliente. MAG permite saldamento e mudança para vitalício.",
+        "anos_renda": 10,
+        "capital_min": 100_000, "capital_max": 10_000_000,
+        "azos": {
+            "disponivel": False,
+            "obs": "AZOS não oferece Term Life nivelado — só Tradicional (TR1, reajuste etário).",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Private Solutions · Term Life",
+            "nome_no_portal": "TERM LIFE",
+            "modalidade": "term_life",
+            "modelo_preco": "taxa", "taxa": 0.18,
+            "min": 100_000, "max": 10_000_000,
+            "fonte": "calibrada",
+            "obs": "R$183,06/MM p/ homem 33a, 20 anos (PDF v2). Muito competitivo p/ sexo feminino. Saldamento mesmo sendo Term Life. Permite mudança p/ vitalício.",
+        },
+    },
+
+    # ── MORTE — WHOLE LIFE (vitalício prêmio nivelado) ────────────────────
+    {
+        "id": "morte_whole_life",
+        "nome": "Morte — Whole Life (vitalício com prêmio nivelado)",
+        "tipo": "morte",
+        "modalidade": "whole_life",
+        "grupo_exclusivo": "morte",
+        "descricao": "Vitalício com prêmio fixo a vida toda. Possibilidade de quitação e formação de reserva. Ideal para sucessão patrimonial e clientes de alta renda.",
+        "anos_renda": 10,
+        "capital_min": 1_000_000, "capital_max": 25_000_000,
+        "azos": {
+            "disponivel": False,
+            "obs": "AZOS não oferece Whole Life nivelado. Para vitalício na AZOS só Tradicional (TR1).",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Private Solutions · Whole Life Sucessão (3108-3113)",
+            "nome_no_portal": "WHOLE LIFE SUCESSAO",
+            "susep": "15414.901244/2024",
+            "modalidade": "whole_life",
+            "modelo_preco": "taxa", "taxa": 0.55,
+            "min": 1_000_000, "max": 25_000_000,
+            "fonte": "estimada",
+            "obs": "Vitalício, prêmio nivelado fixo. Capital R$1MM-25MM. Idade 25-70.",
+        },
+    },
+
+    # ── MORTE ACIDENTAL ────────────────────────────────────────────────────
     {
         "id": "morte_acidental",
         "nome": "Morte Acidental",
@@ -200,16 +201,16 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         },
         "mag": {
             "disponivel": False,
-            "obs": "Componente embutido nos pacotes SAF — não comparável isoladamente.",
+            "obs": "Componente embutido nos pacotes SAF MAG — não comparável isoladamente.",
         },
     },
 
-    # ── 3) INVALIDEZ PERMANENTE TOTAL (qualquer causa) ──────────────────────
+    # ── INVALIDEZ PERMANENTE TOTAL (IPT — qualquer causa) ────────────────
     {
         "id": "invalidez_permanente",
         "nome": "Invalidez Permanente Total (IPT)",
         "tipo": "invalidez",
-        "descricao": "Indenização em caso de invalidez permanente total por qualquer causa.",
+        "descricao": "Indenização em caso de invalidez permanente total por qualquer causa (doença ou acidente). AZOS e MAG são as poucas que vendem avulso.",
         "anos_renda": 10,
         "capital_min": 100_000, "capital_max": 1_000_000,
         "azos": {
@@ -217,22 +218,29 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "produto": "Invalidez Permanente Total (IPT)",
             "nome_no_portal": "Invalidez Permanente",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 0.11,
+            "modelo_preco": "taxa", "taxa": 0.070,
             "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
+            "obs": "R$70,44/MM p/ 33a no PDF v2. AZOS vende avulso. Abrangência OK. IPTA Majorada disponível separada.",
         },
         "mag": {
-            "disponivel": False,
-            "obs": "MAG não oferece IPT isolada no canal corretor — coberta dentro dos pacotes SAF.",
+            "disponivel": True,
+            "produto": "Invalidez (Private Solutions)",
+            "nome_no_portal": "INVALIDEZ",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.076,
+            "min": 100_000, "max": 1_000_000,
+            "fonte": "calibrada",
+            "obs": "R$76,05/MM p/ 33a no PDF v2. MAG vende avulso. Boa abrangência. Majoração já inclusa. Idade 16-65, vitalício. Abdica do 769.",
         },
     },
 
-    # ── 4) INVALIDEZ TOTAL POR ACIDENTE (Majorada) ──────────────────────────
+    # ── INVALIDEZ TOTAL POR ACIDENTE (IPTA Majorada) ─────────────────────
     {
         "id": "invalidez_acidente",
-        "nome": "Invalidez Total por Acidente (Majorada)",
+        "nome": "Invalidez Total por Acidente (IPTA Majorada)",
         "tipo": "invalidez",
-        "descricao": "Indenização majorada quando a invalidez total é por acidente pessoal.",
+        "descricao": "Indenização majorada quando a invalidez total é por acidente pessoal. AZOS oferece a versão Majorada.",
         "anos_renda": 8,
         "capital_min": 100_000, "capital_max": 1_000_000,
         "azos": {
@@ -246,16 +254,55 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         },
         "mag": {
             "disponivel": False,
-            "obs": "Componente do pacote SAF — não isolável.",
+            "obs": "Majoração já inclusa na cobertura de Invalidez MAG — não isolável.",
         },
     },
 
-    # ── 5) DOENÇAS GRAVES (30 doenças vs MAG Plus 27) ───────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # DOENÇAS GRAVES — 2 linhas (grupo_exclusivo "doencas_graves"):
+    #   - Básico (~13 doenças): AZOS DG13 + MAG Plus (10d)
+    #   - Completo (~30 doenças): AZOS DG30 + MAG Premium (28d)
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── DG — BÁSICO 13 ─────────────────────────────────────────────────────
     {
-        "id": "doencas_graves",
-        "nome": "Doenças Graves",
+        "id": "doencas_graves_dg13",
+        "nome": "Doenças Graves — Básico (~13 doenças)",
         "tipo": "doenca",
-        "descricao": "Capital pago em vida no diagnóstico de doença grave (câncer, AVC, infarto etc).",
+        "grupo_exclusivo": "doencas_graves",
+        "grupo_titulo": "Doenças Graves — escolha o nível de cobertura por seguradora",
+        "descricao": "Cobertura básica (~13 doenças: câncer, AVC, infarto, transplantes etc). Capital pago em vida no diagnóstico.",
+        "anos_renda": 3,
+        "capital_min": 100_000, "capital_max": 800_000,
+        "azos": {
+            "disponivel": True,
+            "produto": "Doenças Graves 13 (DG13)",
+            "nome_no_portal": "Doenças Graves",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.308,
+            "min": 100_000, "max": 800_000,
+            "fonte": "calibrada",
+            "obs": "R$153,95/500k p/ 33a no PDF v2. 13 doenças. Vende avulso. Reenquadramento anual. Sem vínculo com MQC, até R$1MM.",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Doenças Graves Plus (10 doenças)",
+            "nome_no_portal": "DOENÇAS GRAVES PLUS",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.332,
+            "min": 100_000, "max": 500_000,
+            "fonte": "calibrada",
+            "obs": "R$166,18/500k p/ 33a no PDF v2. 10 doenças. Reenquadramento a cada 5 anos (idade final 1 e 6). Câncer LMG sim. Sem vínculo MQC.",
+        },
+    },
+
+    # ── DG — COMPLETO 30 ───────────────────────────────────────────────────
+    {
+        "id": "doencas_graves_dg30",
+        "nome": "Doenças Graves — Completo (28-30 doenças)",
+        "tipo": "doenca",
+        "grupo_exclusivo": "doencas_graves",
+        "descricao": "Cobertura ampliada com 28-30 doenças. Versão mais completa, indicada quando o cliente tem antecedentes ou idade > 40.",
         "anos_renda": 3,
         "capital_min": 100_000, "capital_max": 800_000,
         "azos": {
@@ -263,29 +310,29 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "produto": "Doenças Graves 30 (DG30)",
             "nome_no_portal": "Doenças Graves",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 0.30,
+            "modelo_preco": "taxa", "taxa": 0.351,
             "min": 100_000, "max": 800_000,
             "fonte": "calibrada",
-            "obs": "Cobre 30 doenças graves — versão mais completa da Azos.",
+            "obs": "R$175,60/500k p/ 33a no PDF v2. 30 doenças. Versão mais completa AZOS. Reenquadramento anual.",
         },
         "mag": {
             "disponivel": True,
-            "produto": "Doenças Graves Plus (3501)",
-            "nome_no_portal": "DOENÇAS GRAVES PLUS (3501)",
+            "produto": "Doenças Graves Premium (28 doenças)",
+            "nome_no_portal": "DOENÇAS GRAVES PREMIUM",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 0.50,
+            "modelo_preco": "taxa", "taxa": 0.590,
             "min": 100_000, "max": 500_000,
-            "fonte": "estimada",
-            "obs": "27 doenças (câncer, AVC, Parkinson, transplantes) — calibrar com pré-simulação.",
+            "fonte": "calibrada",
+            "obs": "R$295,17/500k p/ 33a no PDF v2. 28 doenças. Reenquadramento a cada 5 anos. Sem vínculo com MQC, até R$1MM. Câncer LMG sim (30%/50%/100%).",
         },
     },
 
-    # ── 6) CIRURGIAS ─────────────────────────────────────────────────────────
+    # ── CIRURGIAS ──────────────────────────────────────────────────────────
     {
         "id": "cirurgias",
         "nome": "Cirurgias",
         "tipo": "saude",
-        "descricao": "Indenização por procedimentos cirúrgicos listados na apólice (código TUSS).",
+        "descricao": "Indenização por procedimentos cirúrgicos listados (TUSS). AZOS Cirurgia 2.0 cobre até R$100k (limite maior do mercado AZOS).",
         "anos_renda": 2,
         "capital_min": 50_000, "capital_max": 200_000,
         "azos": {
@@ -294,8 +341,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "Cirurgia",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.18,
-            "min": 50_000, "max": 200_000,
+            "min": 50_000, "max": 100_000,
             "fonte": "estimada",
+            "obs": "652 cirurgias cobertas. Capital até R$100k (Cirurgia 2.0 dobra o limite). Indeniza 10/20/50/100% do CS.",
         },
         "mag": {
             "disponivel": True,
@@ -305,17 +353,17 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.25,
             "min": 50_000, "max": 200_000,
             "fonte": "estimada",
-            "obs": "Cirurgias + amparo financeiro durante a recuperação.",
+            "obs": "917 cirurgias + amparo financeiro durante recuperação.",
         },
     },
 
-    # ── 6.5) QUEBRA DE OSSOS — Rupturas e Fraturas (REF) ───────────────────
+    # ── QUEBRA DE OSSOS (REF AZOS) ─────────────────────────────────────────
     {
         "id": "quebra_ossos",
         "nome": "Quebra de Ossos (Rupturas e Fraturas)",
         "tipo": "acidente",
         "modalidade": "tradicional",
-        "descricao": "Indenização por fraturas ósseas e rupturas de tendões/ligamentos por acidente pessoal coberto. Cobertura nova da Azos (REF, lançada em 2025).",
+        "descricao": "Indenização por fraturas ósseas e rupturas de tendões/ligamentos por acidente. Cobertura nova AZOS (REF, lançada em 2025).",
         "anos_renda": 0,
         "capital_min": 5_000, "capital_max": 50_000,
         "capital_padrao": 15_000,
@@ -325,110 +373,132 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "produto": "Rupturas e Fraturas (REF)",
             "nome_no_portal": "Rupturas",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 1.20,   # R$/mês por R$1k — cobertura barata por absoluto, taxa alta por R$1k (capital pequeno)
+            "modelo_preco": "taxa", "taxa": 1.20,
             "min": 5_000, "max": 50_000,
             "fonte": "estimada",
-            "obs": "Cobertura nova Azos (out/2025). Inclui fraturas ósseas, rupturas de tendões e ligamentos.",
+            "obs": "Cobertura AZOS (out/2025). Fraturas ósseas, rupturas de tendões e ligamentos.",
         },
         "mag": {
             "disponivel": False,
-            "obs": "MAG não oferece cobertura específica de Rupturas e Fraturas no canal corretor.",
+            "obs": "MAG não tem cobertura específica de Rupturas e Fraturas. No mercado: Prudential Cirurgias Ampliadas (33 ossos) e Omint Quebra de Ossos (51 ossos).",
         },
     },
 
-    # ── 7) DIÁRIA DE INTERNAÇÃO HOSPITALAR ─────────────────────────────────
+    # ── DIH (Diária de Internação Hospitalar) ──────────────────────────────
     {
         "id": "internacao_hospitalar",
         "nome": "Diária de Internação Hospitalar (DIH)",
         "tipo": "hospitalar",
-        "descricao": "Indenização diária enquanto o segurado estiver internado em hospital.",
+        "descricao": "Indenização diária enquanto internado. Triplica em UTI. AZOS vende avulso (raro no mercado).",
         "anos_renda": 0,
         "capital_min": 100, "capital_max": 1_000,
         "capital_padrao": 300,
         "unidade": "R$/dia",
         "azos": {
             "disponivel": True,
-            "produto": "DIH",
+            "produto": "DIH AZOS",
             "nome_no_portal": "Internação",
             "modalidade": "tradicional",
-            "modelo_preco": "por_unidade", "taxa": 0.08,  # R$/mês por cada R$1 de diária
+            "modelo_preco": "por_unidade", "taxa": 0.0513,
             "min": 100, "max": 1_000,
-            "fonte": "estimada",
-            "obs": "Limite típico 30-60 diárias por evento.",
+            "fonte": "calibrada",
+            "obs": "R$51,30 p/ R$1k de diária (PDF v2). 200 diárias por evento. Franquia 72h. Triplica em UTI. Vende avulso. Reajuste anual.",
         },
         "mag": {
-            "disponivel": False,
-            "obs": "MAG não oferece DIH isolada no portal corretor.",
+            "disponivel": True,
+            "produto": "DIH MAG (150/200/250 diárias)",
+            "nome_no_portal": "DIH",
+            "modalidade": "tradicional",
+            "modelo_preco": "por_unidade", "taxa": 0.0647,
+            "min": 100, "max": 1_000,
+            "fonte": "calibrada",
+            "obs": "R$64,68 p/ R$1k (PDF v2). Não vende avulso (vinculado à Morte). Franquia 4 dias. Triplica em UTI. 150, 200 ou 250 diárias por evento por ano.",
         },
     },
 
-    # ── 8) RENDA POR INCAPACIDADE TEMPORÁRIA ───────────────────────────────
+    # ── DIT / RIT (Renda por Incapacidade Temporária) ───────────────────────
     {
         "id": "renda_incapacidade",
-        "nome": "Renda por Incapacidade Temporária (RIT)",
+        "nome": "Renda por Incapacidade Temporária (RIT / DIT)",
         "tipo": "renda",
-        "descricao": "Renda mensal enquanto o segurado estiver afastado por doença ou acidente.",
+        "descricao": "Renda mensal enquanto afastado por doença ou acidente. AZOS chama de RIT, MAG/mercado chama de DIT. AZOS é a vencedora desta categoria no PDF v2.",
         "anos_renda": 0,
         "capital_min": 1_000, "capital_max": 30_000,
-        "capital_padrao_por_renda": 0.6,  # 60% da renda mensal
+        "capital_padrao_por_renda": 0.6,
         "unidade": "R$/mês de renda",
         "azos": {
             "disponivel": True,
             "produto": "RIT (Renda por Incapacidade Temporária)",
             "nome_no_portal": "Renda por Incapacidade",
             "modalidade": "tradicional",
-            "modelo_preco": "por_unidade", "taxa": 0.025,  # R$/mês por R$1 de renda
+            "modelo_preco": "por_unidade", "taxa": 0.025,
             "min": 1_000, "max": 30_000,
             "fonte": "estimada",
-            "obs": "Carência típica 30 dias; pagamento até 12 meses por evento.",
+            "obs": "Limite 730 dias (mercado: 365). Hérnia de disco sim. Doenças por vetores sim. Cobertura mesmo inadimplente sim. Abrangência global. Vencedora da categoria no PDF v2.",
         },
         "mag": {
-            "disponivel": False,
-            "obs": "Não disponível isoladamente no portal.",
+            "disponivel": True,
+            "produto": "DIT (DIT+MAC+IPAM 10 dias ou DIT+MQC 10 dias)",
+            "nome_no_portal": "DIT",
+            "modalidade": "tradicional",
+            "modelo_preco": "por_unidade", "taxa": 0.030,
+            "min": 1_000, "max": 30_000,
+            "fonte": "estimada",
+            "obs": "Franquia 10 dias doenças, 7 dias reduzida. Limite 365. Hérnia/LMG sim. Sem cobertura mesmo inadimplente.",
         },
     },
 
-    # ── 9) ASSISTÊNCIA FUNERAL ──────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────────────────
+    # FUNERAL / SAF — capital fixo por tier.
+    # AZOS Funeral Individual ou Familiar = R$15.000.
+    # MAG SAF: 3 tiers em grupo_exclusivo "saf"
+    #   - Essencial R$5.500 / Plus R$10.000 / Premium R$15.000
+    # ──────────────────────────────────────────────────────────────────────
+
+    # ── FUNERAL AZOS (capital fixo) ────────────────────────────────────────
     {
-        "id": "funeral",
-        "nome": "Assistência Funeral",
+        "id": "funeral_azos",
+        "nome": "Assistência Funeral AZOS (capital fixo R$15.000)",
         "tipo": "assistencia",
         "modalidade": "pacote_fixo",
-        "descricao": "Cobertura dos custos de funeral até o limite contratado (titular + dependentes).",
+        "descricao": "Cobertura funerária AZOS — Individual (titular) ou Familiar (titular + cônjuge + filhos). Capital fixo R$15.000. Sem carência.",
         "anos_renda": 0,
-        "capital_min": 5_000, "capital_max": 30_000,
-        "unidade": "Limite R$",
+        "capital_min": 15_000, "capital_max": 15_000,
+        "capital_padrao": 15_000,
+        "unidade": "Capital fixo R$",
         "azos": {
             "disponivel": True,
-            "produto": "Assistência Funeral Familiar (AFF)",
+            "produto": "Assistência Funeral (Individual ou Familiar)",
             "nome_no_portal": "Funeral",
             "modalidade": "pacote_fixo",
             "modelo_preco": "fixo", "premio_fixo": 14.90,
-            "min": 5_000, "max": 30_000,
+            "capital_fixo": 15_000,
+            "min": 15_000, "max": 15_000,
             "fonte": "estimada",
-            "obs": "Pacote por valor fixo, cobre titular + cônjuge + filhos.",
+            "obs": "Capital fixo R$15.000. Sem carência. Reembolso de despesas até o limite.",
         },
         "mag": {
-            "disponivel": True,
-            "modalidade": "pacote_fixo",
-            "obs": "Componente embutido nos pacotes SAF MAG — sem prêmio adicional.",
-            "modelo_preco": "fixo", "premio_fixo": 0.0,
+            "disponivel": False,
+            "obs": "Equivalente MAG: SAF Premium (R$15.000) — também capital fixo.",
         },
     },
 
-    # ── 10) SAF FAMILIAR (Pacote MAG: titular + cônjuge + pais e sogros) ──
+    # ── SAF ESSENCIAL MAG (R$5.500) ────────────────────────────────────────
     {
-        "id": "saf_familiar",
-        "nome": "SAF Familiar (Pacote MAG)",
+        "id": "saf_essencial",
+        "nome": "SAF Essencial MAG (R$5.500, familiar + pais e sogros)",
         "tipo": "assistencia",
         "modalidade": "pacote_fixo",
-        "descricao": "Pacote MAG que cobre o titular + cônjuge + pais + sogros com capital fixo. Inclui assistência funeral. Vendido apenas pela MAG.",
+        "grupo_exclusivo": "saf",
+        "grupo_titulo": "SAF MAG — escolha 1 tier (capital fixo por tier)",
+        "descricao": "Pacote MAG com capital fixo R$5.500. Titular + cônjuge + filhos + pais e sogros. Cross-sell após 1ª venda MAG.",
         "anos_renda": 0,
         "capital_min": 5_500, "capital_max": 5_500,
-        "unidade": "Limite R$",
+        "capital_padrao": 5_500,
+        "unidade": "Capital fixo R$",
         "azos": {
             "disponivel": False,
-            "obs": "Equivalente: AFF (Assistência Funeral Familiar) vendido separadamente.",
+            "obs": "Equivalente AZOS: Assistência Funeral Familiar (R$15.000).",
         },
         "mag": {
             "disponivel": True,
@@ -436,10 +506,71 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
             "modalidade": "pacote_fixo",
             "modelo_preco": "fixo",
-            "premio_fixo": 28.41, "capital_fixo": 5_500,
+            "premio_fixo": 28.41,
+            "capital_fixo": 5_500,
             "min": 5_500, "max": 5_500,
             "fonte": "calibrada",
-            "obs": "Pacote familiar com capital fixo R$5.500. Cross-sell após primeira venda MAG.",
+            "obs": "Capital fixo R$5.500 (PDF v2). Idade entrada 16-95. Sem carência. Translado nacional.",
+        },
+    },
+
+    # ── SAF PLUS MAG (R$10.000) ────────────────────────────────────────────
+    {
+        "id": "saf_plus",
+        "nome": "SAF Plus MAG (R$10.000, familiar)",
+        "tipo": "assistencia",
+        "modalidade": "pacote_fixo",
+        "grupo_exclusivo": "saf",
+        "descricao": "Pacote MAG com capital fixo R$10.000. Translado América Latina.",
+        "anos_renda": 0,
+        "capital_min": 10_000, "capital_max": 10_000,
+        "capital_padrao": 10_000,
+        "unidade": "Capital fixo R$",
+        "azos": {
+            "disponivel": False,
+            "obs": "Equivalente AZOS: Assistência Funeral Familiar (R$15.000).",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "SAF Plus",
+            "nome_no_portal": "SAF PLUS",
+            "modalidade": "pacote_fixo",
+            "modelo_preco": "fixo",
+            "premio_fixo": 42.00,
+            "capital_fixo": 10_000,
+            "min": 10_000, "max": 10_000,
+            "fonte": "estimada",
+            "obs": "Capital fixo R$10.000 (PDF v2). Translado América Latina. Sem carência.",
+        },
+    },
+
+    # ── SAF PREMIUM MAG (R$15.000) ─────────────────────────────────────────
+    {
+        "id": "saf_premium",
+        "nome": "SAF Premium MAG (R$15.000, familiar + pet)",
+        "tipo": "assistencia",
+        "modalidade": "pacote_fixo",
+        "grupo_exclusivo": "saf",
+        "descricao": "Pacote MAG com capital fixo R$15.000. Translado internacional ilimitado + funeral pet.",
+        "anos_renda": 0,
+        "capital_min": 15_000, "capital_max": 15_000,
+        "capital_padrao": 15_000,
+        "unidade": "Capital fixo R$",
+        "azos": {
+            "disponivel": False,
+            "obs": "Equivalente AZOS: Assistência Funeral Familiar (R$15.000) — mas sem pet/internacional.",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "SAF Premium",
+            "nome_no_portal": "SAF PREMIUM",
+            "modalidade": "pacote_fixo",
+            "modelo_preco": "fixo",
+            "premio_fixo": 58.00,
+            "capital_fixo": 15_000,
+            "min": 15_000, "max": 15_000,
+            "fonte": "estimada",
+            "obs": "Capital fixo R$15.000 (PDF v2). Translado internacional ilimitado. Funeral pet. Sem carência.",
         },
     },
 ]
@@ -606,6 +737,17 @@ def recomendar(cliente: dict, coberturas_disponiveis: list[str],
 # A função `blends_de_ouro(cliente)` devolve apenas os presets que CASAM com
 # o perfil do cliente (auto-match por idade, IMC, fumante, profissão e
 # dependentes), em ordem de prioridade.
+#
+# IDs do catálogo após refator Fase A:
+#   Morte:       morte_tradicional, morte_term_life, morte_whole_life
+#   Acidental:   morte_acidental
+#   Invalidez:   invalidez_permanente, invalidez_acidente
+#   DG:          doencas_graves_dg13, doencas_graves_dg30  (grupo "doencas_graves")
+#   Cirurgias:   cirurgias, quebra_ossos
+#   Hospitalar:  internacao_hospitalar (DIH)
+#   Renda:       renda_incapacidade (RIT/DIT)
+#   Funeral:     funeral_azos
+#   SAF MAG:     saf_essencial, saf_plus, saf_premium  (grupo "saf")
 # ──────────────────────────────────────────────────────────────────────────────
 
 # Configuração por linha do catálogo. Cada valor indica quais seguradoras
@@ -613,30 +755,32 @@ def recomendar(cliente: dict, coberturas_disponiveis: list[str],
 #   None      → linha não entra no blend (fica desligada)
 #   "azos"    → só AZOS
 #   "mag"     → só MAG
-#   "ambos"   → AZOS + MAG combinados (apenas onde fizer sentido)
 
 _BLENDS_OURO_DEFS: list[dict] = [
-    # ── Perfil 1: Cliente jovem saudável — força em "em vida" + Term Life ──
+    # ── Perfil 1: Cliente jovem saudável (Até 50 · IMC bom · Não fumante) ──
     {
         "id": "ate50_saudavel",
         "nome": "Até 50 · Saudável",
-        "descricao": "Cliente jovem, IMC bom, não fumante. Custo eficiente: Term Life na morte + invalidez/DG/cirurgias na AZOS + SAF na MAG.",
+        "descricao": "Cliente jovem, IMC bom, não fumante. Tradicional AZOS na morte + invalidez/DG/cirurgias AZOS + SAF Essencial MAG.",
         "perfil": "Até 50 anos · IMC normal · Não fumante",
         "condicoes": {"idade_max": 50, "imc_max": 30, "fumante": False},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      "azos",
-            "morte_tradicional":    None,
-            "morte_acidental":      "azos",
-            "invalidez_permanente": "azos",
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         "azos",
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   "azos",
-            "funeral":              None,
-            "saf_familiar":         "mag",
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   "azos",
+            "cirurgias":             "mag",
+            "quebra_ossos":          "azos",
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    "azos",
+            "funeral_azos":          None,
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
@@ -644,51 +788,57 @@ _BLENDS_OURO_DEFS: list[dict] = [
     {
         "id": "acima50_saudavel",
         "nome": "Acima de 50 · Saudável",
-        "descricao": "Cliente maduro saudável. Whole Life MAG na base (vitalício nivelado, sem reajuste etário) + invalidez/DG na AZOS.",
+        "descricao": "Cliente maduro saudável. Whole Life MAG na base (vitalício nivelado, sem reajuste etário) + DG MAG Premium + cirurgias MAG.",
         "perfil": "Acima de 50 anos · IMC normal · Não fumante",
         "condicoes": {"idade_min": 50, "idade_max": 64, "imc_max": 30, "fumante": False},
         "linhas": {
-            "morte_whole_life":     "mag",
-            "morte_term_life":      None,
-            "morte_tradicional":    None,
-            "morte_acidental":      "azos",
-            "invalidez_permanente": "azos",
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         None,
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   None,
-            "funeral":              None,
-            "saf_familiar":         "mag",
+            "morte_tradicional":     None,
+            "morte_term_life":       None,
+            "morte_whole_life":      "mag",
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   "mag",
+            "cirurgias":             "mag",
+            "quebra_ossos":          None,
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    None,
+            "funeral_azos":          None,
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
-    # ── Perfil 3: Fumante / IMC alto — risco maior, foco em essencial ──
+    # ── Perfil 3: Fumante / IMC alto — risco maior ──
     {
         "id": "fumante_imc_alto",
         "nome": "Fumante / IMC alto",
-        "descricao": "Perfil de risco mais elevado. Tradicional barata na morte + invalidez por acidente + cirurgias. Sem DG (custo alto).",
+        "descricao": "Perfil de risco elevado. MAG cobre tudo que dá (Whole Life MAG aceita mais que AZOS) + DG13 (Plus) para conter custo + SAF Essencial.",
         "perfil": "Qualquer idade · IMC alto OU fumante",
         "condicoes": {"_qualquer": ["fumante:sim", "imc_min:30"]},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      None,
-            "morte_tradicional":    "azos",
-            "morte_acidental":      "azos",
-            "invalidez_permanente": None,
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       None,
-            "cirurgias":            "azos",
-            "quebra_ossos":         "azos",
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   None,
-            "funeral":              "azos",
-            "saf_familiar":         "mag",
+            "morte_tradicional":     None,
+            "morte_term_life":       None,
+            "morte_whole_life":      "mag",
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    None,
+            "doencas_graves_dg13":   "mag",
+            "doencas_graves_dg30":   None,
+            "cirurgias":             "mag",
+            "quebra_ossos":          "azos",
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    None,
+            "funeral_azos":          None,
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
-    # ── Perfil 4: Sucessão empresarial/familiar — alta renda, capital grande ──
+    # ── Perfil 4: Sucessão empresarial/familiar — alta renda ──
     {
         "id": "sucessao",
         "nome": "Sucessão Empresarial/Familiar",
@@ -696,43 +846,49 @@ _BLENDS_OURO_DEFS: list[dict] = [
         "perfil": "Sucessão · Saudável · IMC normal · Não fumante",
         "condicoes": {"idade_max": 70, "imc_max": 30, "fumante": False, "renda_min": 30_000},
         "linhas": {
-            "morte_whole_life":     "mag",
-            "morte_term_life":      None,
-            "morte_tradicional":    "azos",
-            "morte_acidental":      "azos",
-            "invalidez_permanente": "azos",
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         None,
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   None,
-            "funeral":              None,
-            "saf_familiar":         "mag",
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      "mag",
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   "mag",
+            "cirurgias":             "mag",
+            "quebra_ossos":          None,
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    None,
+            "funeral_azos":          None,
+            "saf_essencial":         None,
+            "saf_plus":              None,
+            "saf_premium":           "mag",
         },
     },
 
-    # ── Perfil 5: Até 65 com doença crônica ──
+    # ── Perfil 5: Até 65 hipertenso/diabético controlado ──
     {
         "id": "doente_cronico",
         "nome": "Até 65 · Hipertenso/Diabético",
-        "descricao": "Condição crônica controlada. Tradicional + invalidez por acidente + cirurgias. DG sujeito a aceitação.",
+        "descricao": "Condição crônica controlada. Tradicional AZOS + invalidez por acidente + DG13 (DG30 pode ter restrição).",
         "perfil": "Até 65 anos · Hipertenso ou diabético · IMC bom · Não fumante",
         "condicoes": {"idade_max": 65, "med_continuo": True, "fumante": False},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      None,
-            "morte_tradicional":    "azos",
-            "morte_acidental":      "azos",
-            "invalidez_permanente": None,
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         None,
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   None,
-            "funeral":              None,
-            "saf_familiar":         "mag",
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  None,
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   "azos",
+            "doencas_graves_dg30":   None,
+            "cirurgias":             "azos",
+            "quebra_ossos":          None,
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    None,
+            "funeral_azos":          None,
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
@@ -744,19 +900,22 @@ _BLENDS_OURO_DEFS: list[dict] = [
         "perfil": "Até 65 · Solteiro · Sem filhos · Saudável",
         "condicoes": {"idade_max": 65, "fumante": False, "sem_dependentes": True},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      None,
-            "morte_tradicional":    None,
-            "morte_acidental":      "azos",
-            "invalidez_permanente": "azos",
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         "azos",
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   "azos",
-            "funeral":              "azos",
-            "saf_familiar":         None,
+            "morte_tradicional":     None,
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   "azos",
+            "cirurgias":             "mag",
+            "quebra_ossos":          "azos",
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    "azos",
+            "funeral_azos":          "azos",
+            "saf_essencial":         None,
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
@@ -764,23 +923,26 @@ _BLENDS_OURO_DEFS: list[dict] = [
     {
         "id": "idoso_sem_saude",
         "nome": "Acima de 65 · Sem saúde",
-        "descricao": "Idade avançada com saúde comprometida. Foco em SAF familiar + funeral. Sem DG/IPT (não aceitam).",
+        "descricao": "Idade avançada com saúde comprometida. MAG cobre quase tudo (aceita melhor que AZOS nesse perfil) + SAF Essencial.",
         "perfil": "Acima 65 · Sem saúde · IMC e tabagismo irrelevantes",
         "condicoes": {"idade_min": 65},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      None,
-            "morte_tradicional":    "azos",
-            "morte_acidental":      "azos",
-            "invalidez_permanente": None,
-            "invalidez_acidente":   None,
-            "doencas_graves":       None,
-            "cirurgias":            None,
-            "quebra_ossos":         None,
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   None,
-            "funeral":              "azos",
-            "saf_familiar":         "mag",
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "mag",
+            "invalidez_acidente":    None,
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   None,
+            "cirurgias":             "mag",
+            "quebra_ossos":          None,
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    None,
+            "funeral_azos":          "azos",
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
@@ -788,47 +950,53 @@ _BLENDS_OURO_DEFS: list[dict] = [
     {
         "id": "profissoes_diferenciadas",
         "nome": "Profissões diferenciadas",
-        "descricao": "Médicos e dentistas têm IPTA Médicos + DG Top na AZOS (taxas reduzidas). Blend completo.",
-        "perfil": "Até 65 · Médico, Dentista ou Engenheiro",
+        "descricao": "Médicos e dentistas têm IPTA Médicos e DG Top na AZOS (taxas reduzidas). Blend completo na AZOS + SAF MAG.",
+        "perfil": "Até 65 · Médico, Dentista, Engenheiro ou Advogado",
         "condicoes": {"idade_max": 65, "profissao_match": r"m[eé]dico|dentista|engenheir|advogad"},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      "azos",
-            "morte_tradicional":    None,
-            "morte_acidental":      "azos",
-            "invalidez_permanente": "azos",
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       "azos",
-            "cirurgias":            "azos",
-            "quebra_ossos":         "azos",
-            "internacao_hospitalar":"azos",
-            "renda_incapacidade":   "azos",
-            "funeral":              None,
-            "saf_familiar":         "mag",
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  "azos",
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   "azos",
+            "cirurgias":             "azos",
+            "quebra_ossos":          "azos",
+            "internacao_hospitalar": "azos",
+            "renda_incapacidade":    "azos",
+            "funeral_azos":          None,
+            "saf_essencial":         "mag",
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 
-    # ── Perfil 9: Orçamento curto ──
+    # ── Perfil 9: Orçamento curto — cobertura mínima essencial ──
     {
         "id": "orcamento_curto",
         "nome": "Orçamento curto",
-        "descricao": "Cobertura mínima essencial: Term Life curto + invalidez por acidente + cirurgias.",
+        "descricao": "Cobertura mínima essencial: Tradicional AZOS (custo inicial baixo) + invalidez por acidente + Quebra de Ossos.",
         "perfil": "Até 65 · Orçamento limitado",
         "condicoes": {"idade_max": 65, "renda_max": 8_000},
         "linhas": {
-            "morte_whole_life":     None,
-            "morte_term_life":      "azos",
-            "morte_tradicional":    None,
-            "morte_acidental":      "azos",
-            "invalidez_permanente": None,
-            "invalidez_acidente":   "azos",
-            "doencas_graves":       None,
-            "cirurgias":            None,
-            "quebra_ossos":         "azos",
-            "internacao_hospitalar":None,
-            "renda_incapacidade":   None,
-            "funeral":              None,
-            "saf_familiar":         None,
+            "morte_tradicional":     "azos",
+            "morte_term_life":       None,
+            "morte_whole_life":      None,
+            "morte_acidental":       "azos",
+            "invalidez_permanente":  None,
+            "invalidez_acidente":    "azos",
+            "doencas_graves_dg13":   None,
+            "doencas_graves_dg30":   None,
+            "cirurgias":             None,
+            "quebra_ossos":          "azos",
+            "internacao_hospitalar": None,
+            "renda_incapacidade":    None,
+            "funeral_azos":          None,
+            "saf_essencial":         None,
+            "saf_plus":              None,
+            "saf_premium":           None,
         },
     },
 ]
