@@ -559,6 +559,59 @@
       font-weight: 700;
     }
 
+    /* ─── Tela de Análise de Viabilidade ─── */
+    .viab-perfil-wrap {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 10px;
+      padding: 14px; margin-bottom: 18px;
+      background: linear-gradient(135deg, #faf9f4 0%, #fff 100%);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius);
+    }
+    .viab-perfil-cell .lab {
+      font-size: .58rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--text-mute); font-weight: 700;
+    }
+    .viab-perfil-cell .val {
+      font-size: 1rem; font-weight: 700; color: var(--primary);
+      margin-top: 2px;
+    }
+    .viab-budget {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      padding: 16px;
+      border: 1.5px solid var(--secondary);
+      border-radius: var(--radius);
+      background: linear-gradient(135deg, #f7fdfd 0%, #fff 100%);
+      margin-bottom: 14px;
+    }
+    .viab-budget .vb-cell .lab {
+      font-size: .58rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--secondary-dk); font-weight: 700;
+    }
+    .viab-budget .vb-cell .val {
+      font-size: 1.4rem; font-weight: 800; color: var(--primary);
+      font-variant-numeric: tabular-nums;
+    }
+    .viab-budget .vb-cell .val span { font-size: .8rem; font-weight: 500; color: var(--text-mute); }
+    .viab-budget .vb-rec {
+      grid-column: 1 / -1;
+      padding: 10px 14px;
+      background: var(--primary); color: #fff;
+      border-radius: var(--radius);
+      font-weight: 600;
+    }
+    .viab-budget .vb-rec strong { font-size: 1.05rem; }
+
+    .viab-cell-ok    { color: #058b78; font-weight: 700; }
+    .viab-cell-warn  { color: #b8870e; font-weight: 700; }
+    .viab-cell-fixo  { color: var(--secondary-dk); font-weight: 700; }
+    .viab-cell-no    { color: #b54848; font-weight: 600; }
+    .viab-cell-detail {
+      font-size: .68rem; color: var(--text-mute); font-weight: 500;
+      margin-top: 2px; line-height: 1.35;
+    }
+
     .seg-card {
       position: relative;
       padding: 14px 16px;
@@ -580,6 +633,26 @@
     .seg-card.disabled, .seg-card.indisponivel {
       cursor: not-allowed; opacity: .5; border-style: dashed;
     }
+    .wl-quit {
+      margin-top: 6px; padding: 6px 8px;
+      background: #fafbfd; border: 1px dashed var(--border-strong);
+      border-radius: 8px;
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      width: 100%;
+    }
+    .wl-quit-label {
+      font-size: .55rem; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--text-mute); font-weight: 700;
+    }
+    .wl-quit-select {
+      width: 100%; padding: 4px 6px;
+      font-size: .75rem; font-weight: 600;
+      border: 1px solid var(--border-strong); border-radius: 6px;
+      background: #fff; color: var(--text);
+      cursor: pointer;
+    }
+    .wl-quit-select:hover { border-color: var(--secondary); }
+    .wl-quit-select:focus { outline: 2px solid var(--secondary); outline-offset: 1px; }
     .seg-card .seg-name {
       font-size: .68rem; letter-spacing: .2em; text-transform: uppercase;
       color: var(--text-mute); font-weight: 700;
@@ -730,8 +803,9 @@
 
 <div class="stepper" id="stepper">
   <div class="step ativo" data-step="1"><div class="num">1</div><div class="label">Dados do Cliente</div></div>
-  <div class="step"        data-step="2"><div class="num">2</div><div class="label">Seguradoras &amp; Blend</div></div>
-  <div class="step"        data-step="3"><div class="num">3</div><div class="label">Lançar Cotações</div></div>
+  <div class="step"        data-step="viab"><div class="num">2</div><div class="label">Análise de Viabilidade</div></div>
+  <div class="step"        data-step="2"><div class="num">3</div><div class="label">Seguradoras &amp; Blend</div></div>
+  <div class="step"        data-step="3"><div class="num">4</div><div class="label">Lançar Cotações</div></div>
 </div>
 
 <!-- TELA 1 — Dados do cliente -->
@@ -743,7 +817,7 @@
       Quanto mais preciso o input, melhor o planejamento.
     </p>
 
-    <form id="form-cliente" onsubmit="event.preventDefault(); irPara(2);">
+    <form id="form-cliente" onsubmit="event.preventDefault(); irPara('viab');">
       <div class="card-section-title">Segurado · Dados pessoais</div>
       <div class="grid">
         <div class="full">
@@ -967,6 +1041,37 @@
 </div>
 
 
+<!-- TELA VIAB — Análise de Viabilidade (intermediária) -->
+<div class="tela wide" id="tela-viab" style="display:none">
+  <div class="card">
+    <h2>Passo 2 · Análise de Viabilidade</h2>
+    <p class="subtitle" id="viabSubtitle">Antes de montar o blend, vamos ver quais seguradoras aceitam o perfil do cliente e qual orçamento já se desenha.</p>
+
+    <div class="viab-perfil-wrap" id="viabPerfil"></div>
+
+    <div class="card-section-title">Orçamento estimado · regra de blend</div>
+    <div class="viab-budget" id="viabBudget"></div>
+
+    <div class="card-section-title">Matriz de disponibilidade · linhas × seguradoras</div>
+    <div class="alerta-info">
+      Cada célula mostra se aquela seguradora cobre a linha para este perfil, qual o capital
+      máximo aceito e (quando aplicável) restrições. <strong>Cotação real</strong> hoje: AZOS + MAG.
+    </div>
+    <div class="comp-wrap">
+      <table class="comp-table" id="viabTable">
+        <thead id="viabHead"></thead>
+        <tbody id="viabBody"></tbody>
+      </table>
+    </div>
+
+    <div class="acoes-row">
+      <button type="button" class="btn btn-secondary" onclick="irPara(1)">← Voltar para dados</button>
+      <button type="button" class="btn btn-accent" onclick="irPara(2)">Continuar para Blend →</button>
+    </div>
+  </div>
+</div>
+
+
 <!-- TELA 2 — Seguradoras e blend -->
 <div class="tela wide" id="tela-2" style="display:none">
   <div class="card">
@@ -1003,7 +1108,7 @@
     <div class="resumo" id="resumoBlend"></div>
 
     <div class="acoes-row">
-      <button type="button" class="btn btn-secondary" onclick="irPara(1)">← Voltar para dados</button>
+      <button type="button" class="btn btn-secondary" onclick="irPara('viab')">← Voltar para viabilidade</button>
       <button type="button" class="btn btn-accent" onclick="irPara(3)">Ir para lançamento →</button>
     </div>
   </div>
@@ -1064,16 +1169,27 @@ const MODAL_LABEL = {
   pacote_fixo: 'Pacote',
 };
 
+// Ordem visual dos passos. Mantém os IDs originais (`tela-2`, `tela-3`) e
+// insere `tela-viab` na posição 2 visualmente sem renumerar os outros.
+const STEP_KEYS = ['1', 'viab', '2', '3'];
+
 function irPara(n) {
-  ['1','2','3'].forEach(s => document.getElementById('tela-' + s).style.display = 'none');
-  document.querySelectorAll('.step').forEach((el, i) => {
-    el.classList.toggle('ativo', String(i+1) === String(n));
-    el.classList.toggle('completo', (i+1) < n);
+  const key = String(n);
+  STEP_KEYS.forEach(s => {
+    const el = document.getElementById('tela-' + s);
+    if (el) el.style.display = 'none';
   });
-  document.getElementById('tela-' + n).style.display = 'block';
+  const idxAtual = STEP_KEYS.indexOf(key);
+  document.querySelectorAll('.step').forEach((el, i) => {
+    el.classList.toggle('ativo', i === idxAtual);
+    el.classList.toggle('completo', idxAtual >= 0 && i < idxAtual);
+  });
+  const alvo = document.getElementById('tela-' + key);
+  if (alvo) alvo.style.display = 'block';
   window.scrollTo({ top: 0, behavior: 'smooth' });
-  if (String(n) === '2') prepararTela2();
-  if (String(n) === '3') prepararTela3();
+  if (key === 'viab') prepararTelaViab();
+  if (key === '2')    prepararTela2();
+  if (key === '3')    prepararTela3();
 }
 
 function toggleConjuge(estado) {
@@ -1175,6 +1291,126 @@ function limparGravacao() {
 function prepararTela2() {
   renderSegPickGrid();
   carregarPlanejamento();
+}
+
+// ── Tela intermediária de Viabilidade ────────────────────────────────────
+async function prepararTelaViab() {
+  // Carrega planejamento (mesmo fluxo da tela-2) — depois renderiza matriz.
+  await carregarPlanejamento();
+  if (!_planejamento) return;
+  _renderViabPerfil();
+  _renderViabBudget();
+  _renderViabMatriz();
+}
+
+function _renderViabPerfil() {
+  const form = document.getElementById('form-cliente');
+  const cli = _planejamento.cliente || {};
+  const altura = Number(form.altura.value || 0);
+  const peso   = Number(form.peso.value || 0);
+  const imc    = (altura > 0 && peso > 0) ? (peso / Math.pow(altura/100, 2)).toFixed(1) : '—';
+  const fumante = (form.fumante && form.fumante.value === 'sim') ? 'Sim' : 'Não';
+  const cells = [
+    ['Cliente', form.nome.value || '—'],
+    ['Idade',   (cli.idade || '—') + ' anos'],
+    ['Profissão', form.profissao.value || '—'],
+    ['Renda mensal', 'R$ ' + Number(cli.renda_mensal || 0).toLocaleString('pt-BR')],
+    ['IMC', imc],
+    ['Fumante', fumante],
+  ];
+  document.getElementById('viabPerfil').innerHTML = cells.map(([lab, val]) => `
+    <div class="viab-perfil-cell">
+      <div class="lab">${lab}</div>
+      <div class="val">${val}</div>
+    </div>
+  `).join('');
+}
+
+function _renderViabBudget() {
+  // Soma do prêmio "default" (escolhido_default × linha ativa) — estimativa
+  // pré-blend. Serve só pra orientar AZOS-only vs AZOS+MAG.
+  let totAzos = 0, totMag = 0;
+  (_planejamento.linhas || []).forEach(L => {
+    if (!L.ativo_default) return;
+    if (L.escolhido_default === 'azos' && L.azos && L.azos.disponivel) {
+      totAzos += Number(L.azos.premio_estimado || 0);
+    } else if (L.escolhido_default === 'mag' && L.mag && L.mag.disponivel) {
+      totMag += Number(L.mag.premio_estimado || 0);
+    }
+  });
+  const total = totAzos + totMag;
+  const onlyAzos = totMag === 0 || total <= 250;
+  const rec = onlyAzos
+    ? `<strong>Sugestão:</strong> plano cabe só com <strong>AZOS</strong> (orçamento estimado R$ ${total.toFixed(2).replace('.',',')}/mês ≤ R$ 250). Reduz fricção (1 portal só, 1 DPS).`
+    : `<strong>Sugestão:</strong> orçamento estimado <strong>R$ ${total.toFixed(2).replace('.',',')}/mês</strong> > R$ 250 → vale levar <strong>AZOS + MAG</strong> para ganhar Whole Life nivelado (MAG) + tabela TR1 (AZOS).`;
+  const fmt = n => 'R$ ' + Number(n).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  document.getElementById('viabBudget').innerHTML = `
+    <div class="vb-cell">
+      <div class="lab">AZOS · subtotal default</div>
+      <div class="val">${fmt(totAzos)}<span>/mês</span></div>
+    </div>
+    <div class="vb-cell">
+      <div class="lab">MAG · subtotal default</div>
+      <div class="val">${fmt(totMag)}<span>/mês</span></div>
+    </div>
+    <div class="vb-cell">
+      <div class="lab">Total estimado</div>
+      <div class="val">${fmt(total)}<span>/mês</span></div>
+    </div>
+    <div class="vb-rec">${rec}</div>
+  `;
+}
+
+function _renderViabMatriz() {
+  // Matriz por linha do catálogo: o que AZOS aceita vs o que MAG aceita.
+  // Versão simples (Fase B). UW por profissão entra na Fase C.
+  document.getElementById('viabHead').innerHTML = `
+    <tr>
+      <th style="width:38%">Cobertura</th>
+      <th class="center">AZOS</th>
+      <th class="center">MAG</th>
+    </tr>
+  `;
+  let ultimoGrupo = null;
+  document.getElementById('viabBody').innerHTML = (_planejamento.linhas || []).map(L => {
+    let separador = '';
+    if (L.grupo_exclusivo && L.grupo_exclusivo !== ultimoGrupo && L.grupo_titulo) {
+      separador = `<tr class="grupo-header"><td colspan="3">
+        <div class="grupo-label"><span class="badge">Grupo</span> ${L.grupo_titulo}</div>
+      </td></tr>`;
+      ultimoGrupo = L.grupo_exclusivo;
+    } else if (!L.grupo_exclusivo) {
+      ultimoGrupo = null;
+    }
+    return separador + `
+      <tr>
+        <td>
+          <strong>${L.nome}</strong>
+          <div class="desc" style="font-size:.72rem;color:var(--text-mute);margin-top:3px">${L.descricao || ''}</div>
+        </td>
+        <td>${_viabCellHTML(L, L.azos)}</td>
+        <td>${_viabCellHTML(L, L.mag)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function _viabCellHTML(linha, info) {
+  if (!info || !info.disponivel) {
+    return `<div class="viab-cell-no">— não oferece —</div>
+      ${info && info.obs ? `<div class="viab-cell-detail">${info.obs}</div>` : ''}`;
+  }
+  if (info.capital_fixo) {
+    return `<div class="viab-cell-fixo">🔒 Capital fixo R$ ${_fmtBR(info.capital_fixo)}</div>
+      <div class="viab-cell-detail">${info.produto || ''}</div>`;
+  }
+  const mn = Number(info.min) || linha.capital_min;
+  const mx = Number(info.max) || linha.capital_max;
+  const unidade = linha.unidade === 'R$/dia' ? '/dia'
+                : linha.unidade === 'R$/mês de renda' ? '/mês'
+                : '';
+  return `<div class="viab-cell-ok">✓ Capital R$ ${_fmtBR(mn)}–${_fmtBR(mx)}${unidade}</div>
+    <div class="viab-cell-detail">${info.produto || ''}</div>`;
 }
 
 function renderSegPickGrid() {
@@ -1500,6 +1736,8 @@ function segCardHTML(linhaIdx, segId, segName, linha, info) {
   const fixo = info.modelo_preco === 'fixo' || info.capital_fixo;
   const cls = info.selecionado ? ' selecionado' : '';
   const isMelhor = _melhorPara(linha, segId);
+  const quitacaoHTML = _quitacaoControlHTML(linhaIdx, segId, info);
+  const prazoHTML    = _prazoTLControlHTML(linhaIdx, segId, info);
   return `
     <div class="seg-card${cls}" data-segcard="${linhaIdx}-${segId}"
          onclick="toggleSegCard(${linhaIdx}, '${segId}')">
@@ -1511,8 +1749,72 @@ function segCardHTML(linhaIdx, segId, segName, linha, info) {
       <span class="fonte-pill ${info.fonte || 'estimada'}">${info.fonte === 'calibrada' ? '● real' : '○ estimado'}</span>
       ${info.modalidade ? `<span class="modal-pill ${info.modalidade}">${MODAL_LABEL[info.modalidade] || info.modalidade}</span>` : ''}
       ${info.produto ? `<div class="seg-produto">${info.produto}</div>` : ''}
+      ${quitacaoHTML}
+      ${prazoHTML}
     </div>
   `;
+}
+
+// ── Whole Life: opções de quitação (MAG e futuras Icatu/Omint/Centauro) ──
+const WHOLE_LIFE_QUITACAO_OPCOES = [
+  { v: 'vitalicio',    label: 'Pagar pelo resto da vida' },
+  { v: 'quit_10_anos', label: 'Quitar em 10 anos' },
+  { v: 'quit_15_anos', label: 'Quitar em 15 anos' },
+  { v: 'quit_20_anos', label: 'Quitar em 20 anos' },
+  { v: 'quit_25_anos', label: 'Quitar em 25 anos' },
+  { v: 'idade_60',     label: 'Quitar até os 60 anos' },
+  { v: 'idade_65',     label: 'Quitar até os 65 anos' },
+  { v: 'idade_70',     label: 'Quitar até os 70 anos' },
+];
+
+function _quitacaoControlHTML(linhaIdx, segId, info) {
+  if (info.modalidade !== 'whole_life') return '';
+  const cur = info.modo_quitacao || 'vitalicio';
+  const opts = WHOLE_LIFE_QUITACAO_OPCOES.map(o =>
+    `<option value="${o.v}" ${o.v === cur ? 'selected' : ''}>${o.label}</option>`
+  ).join('');
+  // Clique no select não deve propagar pra toggleSegCard (selecionar o card)
+  return `
+    <div class="wl-quit" onclick="event.stopPropagation()">
+      <span class="wl-quit-label">Quitação</span>
+      <select class="wl-quit-select" onchange="setWholeLifeQuitacao(${linhaIdx}, '${segId}', this.value)">
+        ${opts}
+      </select>
+    </div>
+  `;
+}
+
+// ── Term Life: prazo da vigência ─────────────────────────────────────────
+const TERM_LIFE_PRAZO_OPCOES = [10, 15, 20, 25, 30];
+
+function _prazoTLControlHTML(linhaIdx, segId, info) {
+  if (info.modalidade !== 'term_life') return '';
+  const cur = Number(info.prazo_anos) || 20;
+  const opts = TERM_LIFE_PRAZO_OPCOES.map(p =>
+    `<option value="${p}" ${p === cur ? 'selected' : ''}>${p} anos</option>`
+  ).join('');
+  return `
+    <div class="wl-quit" onclick="event.stopPropagation()">
+      <span class="wl-quit-label">Prazo nivelado</span>
+      <select class="wl-quit-select" onchange="setTermLifePrazo(${linhaIdx}, '${segId}', this.value)">
+        ${opts}
+      </select>
+    </div>
+  `;
+}
+
+function setWholeLifeQuitacao(linhaIdx, segId, valor) {
+  const L = _planejamento.linhas[linhaIdx];
+  if (!L || !L[segId]) return;
+  L[segId].modo_quitacao = valor;
+  // (Nota: prêmio MAG Whole Life ainda usa taxa estimada — quando a integração
+  // Playwright Whole Life Sucessão for calibrada, o modo influenciará o prêmio.)
+}
+
+function setTermLifePrazo(linhaIdx, segId, valor) {
+  const L = _planejamento.linhas[linhaIdx];
+  if (!L || !L[segId]) return;
+  L[segId].prazo_anos = Number(valor) || 20;
 }
 
 function toggleSegCard(linhaIdx, segId) {
@@ -1667,14 +1969,23 @@ async function dispararCotacao() {
     _seguradorasAtivas.forEach(segId => {
       const info = L[segId];
       if (info && info.selecionado && info.disponivel) {
-        blend[segId].push({
+        const item = {
           linha_id: L.id, linha_nome: L.nome,
           nome_no_portal: info.nome_no_portal,
           produto: info.produto,
           modalidade: info.modalidade,
           capital: info.capital_fixo ? info.capital_fixo : cap,
           premio_estimado: info.premio_estimado || 0,
-        });
+        };
+        // Metadata adicional por modalidade (Playwright vai usar quando for
+        // calibrado; por ora vira só registro pro LP)
+        if (info.modalidade === 'whole_life' && info.modo_quitacao) {
+          item.modo_quitacao = info.modo_quitacao;
+        }
+        if (info.modalidade === 'term_life') {
+          item.prazo_anos = Number(info.prazo_anos) || 20;
+        }
+        blend[segId].push(item);
       }
     });
   });
