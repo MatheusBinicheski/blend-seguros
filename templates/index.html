@@ -504,11 +504,59 @@
       padding: 2px 8px; border-radius: 999px; font-weight: 700;
       letter-spacing: .14em;
     }
-    .cap-input { display: flex; flex-direction: column; gap: 6px; max-width: 160px; }
-    .cap-input input { padding: 10px 12px; text-align: right; font-weight: 700; }
+    .cap-input { display: flex; flex-direction: column; gap: 6px; max-width: 200px; }
+    .cap-input .cap-row { display: flex; align-items: stretch; gap: 6px; }
+    .cap-input .cap-row input {
+      flex: 1;
+      padding: 10px 12px; text-align: right; font-weight: 700;
+      min-width: 0;
+      font-variant-numeric: tabular-nums;
+    }
+    .cap-input .cap-row input:focus {
+      outline: 2px solid var(--secondary);
+      outline-offset: 1px;
+    }
+    .cap-input .cap-step {
+      width: 32px; padding: 0;
+      border: 1.5px solid var(--border-strong);
+      background: var(--bg);
+      color: var(--secondary-dk);
+      font-weight: 700; font-size: 1.1rem;
+      border-radius: var(--radius-sm, 8px);
+      cursor: pointer;
+      transition: all .15s;
+      user-select: none;
+    }
+    .cap-input .cap-step:hover { border-color: var(--secondary); background: #f7fdfd; }
+    .cap-input .cap-step:active { transform: scale(.95); }
+    .cap-input .cap-step:disabled { opacity: .35; cursor: not-allowed; }
     .cap-input .unidade {
       font-size: .65rem; letter-spacing: .12em; text-transform: uppercase;
       color: var(--secondary-dk); font-weight: 700;
+    }
+    .cap-input .cap-passo {
+      font-size: .58rem; letter-spacing: .08em;
+      color: var(--text-mute);
+      text-align: center;
+    }
+    .cap-fixo-badge {
+      display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+      padding: 10px 14px;
+      background: linear-gradient(135deg, #f7fdfd 0%, #eefbfb 100%);
+      border: 1.5px solid var(--secondary);
+      border-radius: var(--radius-sm, 8px);
+      max-width: 200px;
+    }
+    .cap-fixo-badge .val {
+      font-size: 1.05rem; font-weight: 700;
+      color: var(--secondary-dk);
+      font-variant-numeric: tabular-nums;
+    }
+    .cap-fixo-badge .tag {
+      font-size: .58rem; letter-spacing: .12em;
+      text-transform: uppercase;
+      color: var(--secondary);
+      font-weight: 700;
     }
 
     .seg-card {
@@ -1278,7 +1326,6 @@ function renderTabelaComparativa() {
     } else if (!L.grupo_exclusivo) {
       ultimoGrupo = null;
     }
-    const passo = (L.unidade === 'R$/dia') ? 10 : (L.unidade === 'R$/mês de renda') ? 100 : 10000;
     const cells = segsAtivas.map(s => `<td>${segCardHTML(i, s.id, s.nome, L, L[s.id])}</td>`).join('');
     return separador + `
       <tr data-row="${i}">
@@ -1288,19 +1335,145 @@ function renderTabelaComparativa() {
           <strong>${L.nome}</strong>
           <div class="desc">${L.descricao || ''}</div>
         </td>
-        <td>
-          <div class="cap-input">
-            <input type="number" data-capital="${i}"
-                   value="${L.capital_sugerido}" min="${L.capital_min}" max="${L.capital_max}"
-                   step="${passo}" oninput="onCapChange(${i})">
-            <span class="unidade">${L.unidade}</span>
-          </div>
-        </td>
+        <td>${_capCellHTML(i, L)}</td>
         ${cells}
       </tr>
     `;
   }).join('');
   recalcularResumo();
+}
+
+// ── Capital input: edição livre + ajuste rápido por step ────────────────
+function _passoCap(L) {
+  if (L.unidade === 'R$/dia') return 10;
+  if (L.unidade === 'R$/mês de renda') return 100;
+  if ((L.capital_max || 0) <= 50_000) return 1_000;
+  if ((L.capital_max || 0) <= 500_000) return 10_000;
+  return 50_000;
+}
+
+function _fmtBR(n) {
+  return Number(n || 0).toLocaleString('pt-BR');
+}
+
+function _parseCap(s) {
+  if (s == null) return 0;
+  // Aceita "200.000", "200000", "R$ 200.000", "200000,00"
+  const cleaned = String(s).replace(/[^\d,]/g,'').replace(',', '.');
+  return Math.round(Number(cleaned) || 0);
+}
+
+function _capUnidadeSuf(L) {
+  if (L.unidade === 'R$/dia') return '/dia';
+  if (L.unidade === 'R$/mês de renda') return '/mês';
+  return '';
+}
+
+function _capCellHTML(i, L) {
+  // Quando capital_min === capital_max: produto com capital travado (SAF, Funeral fixo).
+  if (L.capital_min === L.capital_max) {
+    return `
+      <div class="cap-fixo-badge">
+        <span class="tag">Capital fixo</span>
+        <span class="val">R$ ${_fmtBR(L.capital_min)}${_capUnidadeSuf(L)}</span>
+      </div>
+    `;
+  }
+  const passo = _passoCap(L);
+  const passoTxt = (L.unidade === 'R$/dia')
+    ? `± R$ ${passo}/dia`
+    : (L.unidade === 'R$/mês de renda')
+      ? `± R$ ${passo}/mês`
+      : `± R$ ${_fmtBR(passo)}`;
+  return `
+    <div class="cap-input">
+      <div class="cap-row">
+        <button type="button" class="cap-step" onclick="ajustarCapital(${i}, -1)" title="Diminuir">−</button>
+        <input type="text" inputmode="numeric" data-capital="${i}" data-raw="${L.capital_sugerido}"
+               value="${_fmtBR(L.capital_sugerido)}"
+               oninput="onCapInput(${i}, this)"
+               onblur="onCapBlur(${i}, this)"
+               onfocus="this.select()">
+        <button type="button" class="cap-step" onclick="ajustarCapital(${i}, +1)" title="Aumentar">+</button>
+      </div>
+      <span class="unidade">${L.unidade}</span>
+      <span class="cap-passo">${passoTxt} · digite o valor exato</span>
+    </div>
+  `;
+}
+
+function _clampCap(L, v) {
+  return Math.max(L.capital_min || 0, Math.min(L.capital_max || v, v));
+}
+
+function _atualizaSegCardsDaLinha(i, L) {
+  // Atualiza inline os textos de prêmio e capital aplicado nos seg-cards
+  // da linha — sem re-renderizar a tabela toda (preserva foco no input).
+  ['azos','mag','icatu','omint'].forEach(segId => {
+    const info = L[segId];
+    if (!info || !info.disponivel) return;
+    const card = document.querySelector(`[data-segcard="${i}-${segId}"]`);
+    if (!card) return;
+    const premioEl = card.querySelector('.seg-premio');
+    const capEl    = card.querySelector('.seg-cap');
+    if (premioEl) {
+      premioEl.innerHTML =
+        `R$ ${Number(info.premio_estimado || 0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}<span> /mês</span>`;
+    }
+    if (capEl) {
+      const fixo = info.modelo_preco === 'fixo' || info.capital_fixo;
+      capEl.textContent = `${fixo ? 'cap. fixo ' : 'cap. '}${_fmtCap(L, info.capital_aplicado || 0)}`;
+    }
+  });
+}
+
+function _recalcularLinha(i, capRaw) {
+  const L = _planejamento.linhas[i];
+  if (!L) return;
+  const cap = _clampCap(L, capRaw);
+  ['azos','mag','icatu','omint'].forEach(segId => {
+    const info = L[segId];
+    if (!info || !info.disponivel) return;
+    const mn = Number(info.min) || L.capital_min;
+    const mx = Number(info.max) || L.capital_max;
+    const ap = info.capital_fixo ? info.capital_fixo : Math.max(mn, Math.min(mx, cap));
+    info.capital_aplicado = ap;
+    info.premio_estimado  = _recalcPremio(info, ap);
+  });
+  _atualizaSegCardsDaLinha(i, L);
+  recalcularResumo();
+}
+
+function onCapInput(i, el) {
+  // Durante typing: parsea livre, atualiza estado interno, NÃO reformata
+  // (pra não atrapalhar a digitação / cursor).
+  const raw = _parseCap(el.value);
+  el.dataset.raw = String(raw);
+  _recalcularLinha(i, raw);
+}
+
+function onCapBlur(i, el) {
+  // Ao sair: clampa + reformata em pt-BR.
+  const L = _planejamento.linhas[i];
+  const raw = _clampCap(L, _parseCap(el.value));
+  el.value = _fmtBR(raw);
+  el.dataset.raw = String(raw);
+  _recalcularLinha(i, raw);
+}
+
+function ajustarCapital(i, sinal) {
+  const L = _planejamento.linhas[i];
+  const el = document.querySelector(`[data-capital="${i}"]`);
+  if (!L || !el) return;
+  const passo = _passoCap(L);
+  const atual = _parseCap(el.value) || L.capital_sugerido || 0;
+  // Arredonda pro múltiplo de passo mais próximo antes de somar — facilita
+  // sair de valores quebrados (ex: 247.350 + step 10k → 250.000).
+  const base = Math.round(atual / passo) * passo;
+  const novo = _clampCap(L, base + sinal * passo);
+  el.value = _fmtBR(novo);
+  el.dataset.raw = String(novo);
+  _recalcularLinha(i, novo);
 }
 
 function _melhorPara(linha, segId) {
@@ -1401,22 +1574,6 @@ function _recalcPremio(info, capital) {
   return Math.round((capital / 1000) * taxa * fator * 100) / 100;
 }
 
-function onCapChange(linhaIdx) {
-  const L = _planejamento.linhas[linhaIdx];
-  const numEl = document.querySelector(`[data-capital="${linhaIdx}"]`);
-  if (!L || !numEl) return;
-  const cap = Number(numEl.value) || 0;
-  ['azos','mag','icatu','omint'].forEach(segId => {
-    const info = L[segId];
-    if (!info || !info.disponivel) return;
-    const mn = Number(info.min) || L.capital_min;
-    const mx = Number(info.max) || L.capital_max;
-    const ap = info.capital_fixo ? info.capital_fixo : Math.max(mn, Math.min(mx, cap));
-    info.capital_aplicado = ap;
-    info.premio_estimado  = _recalcPremio(info, ap);
-  });
-  renderTabelaComparativa();
-}
 
 function recalcularResumo() {
   const segsAtivas = SEGURADORAS.filter(s => _seguradorasAtivas.includes(s.id));
@@ -1503,7 +1660,10 @@ async function dispararCotacao() {
   const blend = { azos: [], mag: [], icatu: [], omint: [] };
   _planejamento.linhas.forEach((L, i) => {
     const numEl = document.querySelector(`[data-capital="${i}"]`);
-    const cap = numEl ? Number(numEl.value) || 0 : L.capital_sugerido;
+    // Input agora é formatado em pt-BR (text). Capital travado vira badge sem
+    // input — nesse caso usa capital_sugerido (que já vem == capital_min/max).
+    const cap = numEl ? _clampCap(L, _parseCap(numEl.value))
+                      : (L.capital_min === L.capital_max ? L.capital_min : L.capital_sugerido);
     _seguradorasAtivas.forEach(segId => {
       const info = L[segId];
       if (info && info.selecionado && info.disponivel) {
