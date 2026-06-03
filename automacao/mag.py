@@ -209,16 +209,28 @@ async def _login(page: Page):
         raise Exception(f"MAG #Cpf não apareceu — url={diag.get('url')}, title={diag.get('title')}, inputs={diag.get('inputs')}, body={diag.get('body_text', '')[:120]}")
     await page.locator('#Cpf').fill(CNPJ)
     await page.locator('input[type="password"]').first.fill(SENHA)
-    await resolver_captcha(page)
+    await page.screenshot(path="/tmp/mag_login_01_filled.png", full_page=True)
+    captcha_ok = await resolver_captcha(page)
+    print(f"[mag][_login] captcha resolvido: {captcha_ok}", flush=True)
     await page.wait_for_timeout(1000)
     await page.evaluate("const b=document.getElementById('btnAuth'); if(b) b.removeAttribute('disabled');")
     await page.wait_for_timeout(300)
     await page.locator('#btnAuth').first.click()
+    print(f"[mag][_login] clicou btnAuth, url={page.url}", flush=True)
 
-    for _ in range(30):
+    for i in range(60):
         await page.wait_for_timeout(1000)
         if not any(x in page.url for x in ("identidade", "auth-callback", "login")):
+            print(f"[mag][_login] saiu da identidade após {i+1}s, url={page.url}", flush=True)
             break
+    else:
+        # Loop terminou sem break → ainda em identidade
+        await page.screenshot(path="/tmp/mag_login_02_timeout.png", full_page=True)
+        try:
+            body_txt = (await page.inner_text("body"))[:400].replace("\n", " | ")
+        except Exception:
+            body_txt = "(falha ao ler body)"
+        raise Exception(f"MAG login não saiu de identidade após 60s — url={page.url} body=...{body_txt}...")
 
     if "/parceria" in page.url:
         lbl = page.locator('.area__partnership label.radio-list__label').first

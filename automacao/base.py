@@ -38,22 +38,29 @@ async def novo_browser(headless: bool = True, extra_args: list[str] | None = Non
 async def resolver_captcha(page: Page) -> bool:
     """Detecta e resolve reCAPTCHA v2 ou hCaptcha via 2captcha. Retorna True se resolveu."""
     if not _CAPTCHA_API_KEY:
+        print("[captcha] sem TWOCAPTCHA_API_KEY", flush=True)
         return False
     try:
-        # Detecta sitekey de reCAPTCHA ou hCaptcha
-        info = await page.evaluate("""() => {
-            const rc = document.querySelector('.g-recaptcha[data-sitekey], [data-sitekey]');
-            const hc = document.querySelector('.h-captcha[data-sitekey]');
-            if (hc) return {type: 'hcaptcha', sitekey: hc.getAttribute('data-sitekey')};
-            if (rc) return {type: 'recaptcha', sitekey: rc.getAttribute('data-sitekey')};
-            // iframe reCAPTCHA embutido
-            for (const iframe of document.querySelectorAll('iframe[src*="recaptcha"]')) {
-                const m = iframe.src.match(/[?&]k=([^&]+)/);
-                if (m) return {type: 'recaptcha', sitekey: m[1]};
-            }
-            return null;
-        }""")
+        # Aguarda até o reCAPTCHA carregar (até 10s). O MAG carrega lazy.
+        info = None
+        for _ in range(20):
+            info = await page.evaluate("""() => {
+                const rc = document.querySelector('.g-recaptcha[data-sitekey], [data-sitekey]');
+                const hc = document.querySelector('.h-captcha[data-sitekey]');
+                if (hc) return {type: 'hcaptcha', sitekey: hc.getAttribute('data-sitekey')};
+                if (rc) return {type: 'recaptcha', sitekey: rc.getAttribute('data-sitekey')};
+                // iframe reCAPTCHA embutido
+                for (const iframe of document.querySelectorAll('iframe[src*="recaptcha"]')) {
+                    const m = iframe.src.match(/[?&]k=([^&]+)/);
+                    if (m) return {type: 'recaptcha', sitekey: m[1]};
+                }
+                return null;
+            }""")
+            if info and info.get("sitekey"):
+                break
+            await page.wait_for_timeout(500)
         if not info or not info.get("sitekey"):
+            print("[captcha] nenhum captcha detectado em 10s (info=None/sem sitekey)", flush=True)
             return False
 
         from twocaptcha import TwoCaptcha
