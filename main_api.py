@@ -296,10 +296,15 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
                         if not match:
                             nao_encontradas.append(alvo)
                             continue
-                        lim = coberturas_limits[match]
-                        v_min = float(lim.get("valor_min") or 50_000)
-                        v_max = float(lim.get("valor_max") or 5_000_000)
-                        cap   = int(max(v_min, min(v_max, int(line.get("capital") or v_min))))
+                        # Não re-clampar com defaults do extrator (1000..5MM são
+                        # placeholders sem base no portal real). O frontend +
+                        # recomendador já clamparam dentro do limite REAL da
+                        # seguradora (ex: AZOS RIT 100..600 R$/dia, Morte
+                        # Acidental ≤ R$ 1MM). Re-clampar aqui quebrava linhas
+                        # como RIT cujo capital é R$/dia (300) e ficava 1000.
+                        cap = int(line.get("capital") or 0)
+                        if cap <= 0:
+                            continue
                         selecoes.append({
                             "nome":   match,
                             "valor":  cap,

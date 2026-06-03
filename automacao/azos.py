@@ -3832,6 +3832,21 @@ async def _clicar_continuar(page):
     IMPORTANTE: Ignora explicitamente o botão 'Fazer cotação' do sidebar
     porque ele navega de volta para dados-pessoais (inicia nova simulação).
     """
+    # Se botão "Ir para o Resumo" existir mas estiver disabled, despeja a
+    # mensagem de erro inline pra ajudar o LP a entender o que travou.
+    # Causa comum: capital de alguma cobertura acima do limite do portal AZOS
+    # (ex: Morte Acidental máx R$ 1MM). Portal aceita o input mas trava o avanço.
+    try:
+        resumo_btn = page.locator('button:has-text("Ir para o Resumo")')
+        if await resumo_btn.count() and await resumo_btn.first.get_attribute("disabled") is not None:
+            body_txt = await page.inner_text("body")
+            idx = body_txt.find("valor máximo")
+            if idx >= 0:
+                trecho = body_txt[max(0, idx-80):idx+200].replace('\n', ' | ')
+                print(f"[azos][_continuar] BLOQUEIO inline: ...{trecho}...", flush=True)
+    except Exception:
+        pass
+
     seletores = [
         'button:has-text("Ir para o Resumo")',
         'button:has-text("Ir para o resumo")',
