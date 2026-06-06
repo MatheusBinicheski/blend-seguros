@@ -661,6 +661,95 @@ async def _ler_limites_slider(page, nome: str) -> dict:
         return {}
 
 
+async def _ajustar_capitais_acima_do_limite(page) -> int:
+    """Lê mensagens 'O valor máximo é R$ X' do DOM e reduz inputs que excedem.
+
+    Estratégia:
+    1. Para cada cobertura no painel de coberturas, busca pelo padrão
+       'Cobertura (Máx R$ N) ... O valor máximo é R$ N' que aparece quando o
+       capital ultrapassou o limite do portal AZOS.
+    2. Lê o capital atual do input correspondente.
+    3. Se capital > limite, seta o input para o limite (clamp).
+    4. Dispara eventos input/change pro React-Select reconhecer a mudança.
+
+    Retorna: número de capitais ajustados.
+    """
+    ajustados = 0
+    try:
+        import re as _re
+
+        def _parse_brl(val_str: str) -> int:
+            """Parseia '1.800.000,00' ou '1800000' → 1800000."""
+            s = val_str.strip().replace("R$", "").strip()
+            m = _re.match(r'^([\d.]+)(?:,(\d{1,2}))?$', s)
+            if m:
+                return int(m.group(1).replace('.', ''))
+            cleaned = _re.sub(r'[^\d]', '', s)
+            return int(cleaned) if cleaned else 0
+
+        # ESTRATÉGIA: pra cada input visível, ler o LABEL adjacente (que tem
+        # "Cobertura (Máx R$ N)"). Se valor atual > max do próprio label,
+        # clampar. Isso evita confusão entre coberturas e respeita o limite
+        # específico de CADA input.
+        all_inputs = page.locator('input[type="tel"]')
+        n_inputs = await all_inputs.count()
+        print(f"[azos][ajuste] checando {n_inputs} inputs type=tel...", flush=True)
+        for i in range(n_inputs):
+            inp = all_inputs.nth(i)
+            try:
+                if not await inp.is_visible():
+                    continue
+                # Valor atual
+                val_str = (await inp.input_value()).strip()
+                val_atual = _parse_brl(val_str)
+                if val_atual <= 0:
+                    continue
+                # Lê o max do label adjacente — tenta vários xpaths
+                # (a estrutura do React do AZOS varia entre coberturas)
+                max_val = None
+                lbl_txt = ""
+                for xp in [
+                    'xpath=ancestor::*[contains(@class,"flex")][1]//label',
+                    'xpath=ancestor::*[3]//label',
+                    'xpath=ancestor::*[4]//label',
+                    'xpath=ancestor::div[descendant::label][1]//label',
+                ]:
+                    lbl_loc = inp.locator(xp).first
+                    if await lbl_loc.count() == 0:
+                        continue
+                    try:
+                        lbl_txt = (await lbl_loc.inner_text()).strip()
+                    except Exception:
+                        continue
+                    m_max = _re.search(r'Máx\s*R\$\s*([\d.]+)(?:,\d{2})?', lbl_txt)
+                    if m_max:
+                        max_val = int(m_max.group(1).replace('.', ''))
+                        break
+                if max_val is None:
+                    print(f"[azos][ajuste] input idx={i} val={val_atual}: sem label 'Máx R$'", flush=True)
+                    continue
+                if val_atual <= max_val:
+                    continue
+                novo_val = max_val
+                print(f"[azos][ajuste] input idx={i} (label='{lbl_txt[:60]}'): {val_atual} → {novo_val}", flush=True)
+                await inp.evaluate(f"""(el) => {{
+                    const setter = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value').set;
+                    setter.call(el, '{novo_val}');
+                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                    el.blur();
+                }}""")
+                await page.wait_for_timeout(400)
+                ajustados += 1
+            except Exception as e_inp:
+                print(f"[azos][ajuste] erro input {i}: {str(e_inp)[:80]}", flush=True)
+                continue
+    except Exception as e:
+        print(f"[azos][ajuste] ERRO: {str(e)[:120]}", flush=True)
+    return ajustados
+
+
 async def _desligar_cobertura(page, nome: str):
     """Desativa cobertura clicando no toggle (bg-primary → bg-black = deselect)."""
     nome_curto = nome[:30]
@@ -847,13 +936,23 @@ async def fase2_selecionar_coberturas(session_id: str, selecoes: list[dict],
                 print(f"[azos][fase2] BLEND parar_cotacao - URL antes={url_antes}", flush=True)
 
                 # Aguarda o botão habilitar (até 20s). Pode estar disabled
-                # enquanto o portal recalcula o prêmio.
+                # enquanto o portal recalcula o prêmio OU porque algum capital
+                # excede o limite do portal (ex: Morte Acidental máx 1MM).
                 avancou_url = False
                 for tentativa in range(8):
                     habilitado = await _continuar_habilitado(page)
                     if habilitado:
                         print(f"[azos][fase2] BLEND botão habilitado na tentativa {tentativa}", flush=True)
                         break
+
+                    # AUTO-AJUSTE: se botão está bloqueado, lê mensagens
+                    # "Máx R$ X" do DOM e reduz capitais que excedem.
+                    if tentativa == 2:
+                        ajustou = await _ajustar_capitais_acima_do_limite(page)
+                        if ajustou:
+                            print(f"[azos][fase2] BLEND auto-ajustou {ajustou} capitais — aguardando portal recalcular", flush=True)
+                            await page.wait_for_timeout(3_500)
+                            continue
                     print(f"[azos][fase2] BLEND tentativa {tentativa}: botão ainda BLOQUEADO, aguardando 2s...", flush=True)
                     await page.wait_for_timeout(2_000)
                 else:
