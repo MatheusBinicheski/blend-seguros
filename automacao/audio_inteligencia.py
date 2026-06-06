@@ -40,14 +40,16 @@ from typing import Optional
 # ─── Catálogo de regras locais ─────────────────────────────────────────────
 
 # Profissões de risco — mapeia padrão → ajustes
+# Os regex são tolerantes a erros do Whisper tiny/base:
+# - acento ausente: cirurgião → cirurgiao
+# - troca de letra: cirurgião → cirurgian, cirurgião → cirurgiano
+# Removi \b nas bordas onde palavra termina em vogal acentuada porque o Whisper
+# às vezes anexa pontuação direto na palavra
 PROFISSOES_RISCO = [
     {
-        # Tolera transcrição imprecisa do Whisper tiny: "cirurgiano", "cirurgião"
-        "match": r"\b(cirurgi[ãa]o|cirurgi[ãa]n[oa]|cirurgia)\b",
+        "match": r"(?i)cirurgi[ãa][onm][oa]?|cirurgia",
         "rotulo": "Cirurgião — mãos são ferramenta de trabalho",
         "ajustes_cliente": {"profissao_hint": "Cirurgião"},
-        # Cirurgião: fratura na mão = parar de operar. Quebra Ossos + RIT críticos.
-        # IPA também precisa estar bem coberta.
         "ajustes_linhas": {
             "quebra_ossos":         "forcar_ativa",
             "renda_incapacidade":   "forcar_ativa_max",
@@ -57,7 +59,7 @@ PROFISSOES_RISCO = [
         },
     },
     {
-        "match": r"\b(dentista|odontolog)\b",
+        "match": r"(?i)dentista|odontolog",
         "rotulo": "Dentista — uso intensivo das mãos",
         "ajustes_cliente": {"profissao_hint": "Dentista"},
         "ajustes_linhas": {
@@ -67,7 +69,7 @@ PROFISSOES_RISCO = [
         },
     },
     {
-        "match": r"\b(m[ée]dic[oa]|cl[íi]nic[oa])\b",
+        "match": r"(?i)\bm[ée]dic[oa]\b|cl[íi]nic[oa]\b",
         "rotulo": "Médico — profissão diferenciada AZOS",
         "ajustes_cliente": {"profissao_hint": "Médico"},
         "ajustes_linhas": {
@@ -136,13 +138,14 @@ PROFISSOES_RISCO = [
 # Doenças preexistentes / risco saúde
 DOENCAS = [
     {
-        "match": r"\b(hipertens[ãa]o|press[ãa]o\s+alta)\b",
+        # Whisper transcreve "hipertenção", "hipertensão", "hipertença", "pressão alta"
+        "match": r"(?i)hipertens[ãa][oc]?[ãa]?o?|hiperten[çc][ãa][mo]|press[ãa]o\s+alta",
         "rotulo": "Hipertensão (uso contínuo de medicamento)",
         "ajustes_cliente": {"med_continuo": "sim", "doenca_hipertensao": True},
         "ajustes_linhas": {"doencas_graves_dg30": "forcar_ativa", "renda_incapacidade": "forcar_ativa"},
     },
     {
-        "match": r"\b(diabet|insulin|glicose\s+alta)\b",
+        "match": r"(?i)diabet|insulin|glicose\s+alta",
         "rotulo": "Diabetes",
         "ajustes_cliente": {"med_continuo": "sim", "doenca_diabetes": True},
         "ajustes_linhas": {"doencas_graves_dg30": "forcar_ativa", "internacao_hospitalar": "forcar_ativa"},
@@ -183,9 +186,10 @@ DOENCAS = [
 ]
 
 # Dependentes e família
+# Whisper às vezes transcreve números como palavras ("três" em vez de "3")
 DEPENDENTES = [
     {
-        "match": r"\b(\d+)\s+filh",
+        "match": r"(?i)(\d+|um|dois|tr[êe]s|quatro|cinco|seis|sete|oito|nove|dez)\s+filh",
         "rotulo": "Tem filhos",
         "extrair_qtd": True,
         "ajustes_cliente": {"tem_dependentes": True},
@@ -195,7 +199,7 @@ DEPENDENTES = [
         },
     },
     {
-        "match": r"\b(filh[oa]s?|crian[çc]a|bebê|gestante)\b",
+        "match": r"(?i)filh[oa]s?|crian[çc]a|beb[êe]|gestante|gr[áa]vid",
         "rotulo": "Tem filhos / criança",
         "ajustes_cliente": {"tem_dependentes": True},
         "ajustes_linhas": {
@@ -204,13 +208,20 @@ DEPENDENTES = [
         },
     },
     {
-        "match": r"\b(esposa|marido|c[ôo]njuge|companheir[oa])\s+(n[ãa]o\s+trabalha|do\s+lar|dependente)\b",
+        "match": r"(?i)(esposa|marido|c[ôo]njuge|companheir[oa]|mulher).{0,15}(n[ãa]o\s+trabalha|do\s+lar|dependente)",
         "rotulo": "Cônjuge dependente financeiro",
         "ajustes_cliente": {"tem_dependentes": True, "estado_civil": "casado"},
         "ajustes_linhas": {
             "morte_tradicional":   "forcar_ativa_max",
             "morte_whole_life":    "forcar_ativa",
         },
+    },
+    {
+        # "casado" sozinho — sinal mais fraco mas relevante
+        "match": r"(?i)\b(casad[oa]|casamento|matrim[ôo]ni)\b",
+        "rotulo": "Casado",
+        "ajustes_cliente": {"estado_civil": "casado"},
+        "ajustes_linhas": {},
     },
     {
         "match": r"\b(cuida\s+(do|da|dos|das)\s+(pai|m[ãa]e|sogr|irm[ãa]o|av[óo]))\b",
@@ -236,7 +247,7 @@ DEPENDENTES = [
 # Patrimônio / sucessão
 PATRIMONIO = [
     {
-        "match": r"\b(sucess[ãa]o|herdeir|holding|grupo\s+familiar|patrim[ôo]nio\s+(em\s+)?im[óo]vei|legado)\b",
+        "match": r"(?i)sucess[ãa]o|herdeir|holding|grupo\s+familiar|patrim[ôo]nio\s+(em\s+)?im[óo]vei|legado|herança",
         "rotulo": "Foco em sucessão patrimonial",
         "ajustes_cliente": {"foco_sucessao": True},
         "ajustes_linhas": {
@@ -245,11 +256,18 @@ PATRIMONIO = [
         },
     },
     {
-        "match": r"\b(\d+)\s*(milh[õo]es|MM)\b",
+        # Whisper transcreve "5 milhões" mas também "cinco milhões"
+        "match": r"(?i)(\d+|um|dois|tr[êe]s|quatro|cinco|seis|sete|oito|nove|dez)\s*milh[õo]es|\bMM\b",
         "rotulo": "Patrimônio multi-milionário",
         "extrair_qtd": True,
         "ajustes_cliente": {"foco_sucessao": True},
         "ajustes_linhas": {"morte_whole_life": "forcar_ativa_max"},
+    },
+    {
+        "match": r"(?i)patrim[ôo]nio",
+        "rotulo": "Tem patrimônio",
+        "ajustes_cliente": {"foco_sucessao": True},
+        "ajustes_linhas": {"morte_whole_life": "forcar_ativa"},
     },
     {
         "match": r"\b(financiamento|hipoteca|im[óo]vel\s+financiad|cr[ée]dito\s+imobili[áa]rio)\b",
@@ -283,7 +301,8 @@ ATIVIDADES = [
         "ajustes_linhas": {"morte_acidental": "forcar_ativa_max"},
     },
     {
-        "match": r"\b(MMA|jiu[\s-]?jitsu|muay\s*thai|boxe|luta\s+livre)\b",
+        # Whisper transcreve jiu-jitsu como "judjitsu", "judo jitsu", "ju-jitsu", "jiujitsu"
+        "match": r"(?i)MMA|j[iuú]u?d?[\s\-]*jitsu|jud[ôo]|muay\s*thai|boxe|luta\s+livre|karat[êe]",
         "rotulo": "Luta / artes marciais",
         "ajustes_cliente": {"esporte_radical": True},
         "ajustes_linhas": {
@@ -347,7 +366,9 @@ def _carregar_modelo():
         raise RuntimeError(
             "faster-whisper não instalado. Adicione 'faster-whisper' ao requirements.txt"
         )
-    model_size = os.getenv("WHISPER_MODEL", "tiny")  # tiny|base|small|medium
+    # Default base: ~150MB, precisão muito maior que tiny pra PT-BR.
+    # tiny faz erros típicos ("cirurgião" → "cirurgiano") que quebram regras.
+    model_size = os.getenv("WHISPER_MODEL", "base")
     compute_type = os.getenv("WHISPER_COMPUTE", "int8")  # int8|float16|float32
     print(f"[audio-IA] carregando faster-whisper modelo={model_size} compute={compute_type}...", flush=True)
     _MODEL = WhisperModel(model_size, compute_type=compute_type, device="cpu")

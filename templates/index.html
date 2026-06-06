@@ -1327,8 +1327,15 @@ function renderAudioSinais() {
     return;
   }
   const sinais = _audioAnalise.sinais || [];
+  const texto  = _audioAnalise.texto  || '';
+  // SEMPRE mostra o texto transcrito (collapsible) pra debug
+  const blocoTexto = `
+    <details style="margin-top:6px;font-size:.8rem">
+      <summary style="cursor:pointer;color:var(--text-mute)">📝 Texto transcrito (${texto.length} chars) — clique pra ver</summary>
+      <div style="margin-top:6px;padding:8px;background:#f8fafc;border-left:3px solid #94a3b8;border-radius:3px;color:#1e293b;line-height:1.5;white-space:pre-wrap">${texto || '(vazio)'}</div>
+    </details>`;
   if (sinais.length === 0) {
-    st.textContent = `Transcrito (${(_audioAnalise.texto || '').length} chars), nenhum sinal específico detectado`;
+    st.innerHTML = `<strong>Transcrito (${texto.length} chars)</strong>, nenhum sinal específico detectado nas regras locais.` + blocoTexto;
     lista.innerHTML = '';
     return;
   }
@@ -1340,9 +1347,9 @@ function renderAudioSinais() {
     atividade:   '#16a34a',
     estilo:      '#64748b',
   };
-  st.textContent = `${sinais.length} sinais detectados no áudio · serão aplicados na recomendação`;
+  st.innerHTML = `<strong>${sinais.length} sinais detectados</strong> · serão aplicados na recomendação` + blocoTexto;
   lista.innerHTML = sinais.map(s => `
-    <div style="display:inline-block;margin:4px 4px 0 0;padding:6px 10px;border-radius:6px;background:${COR_TIPO[s.tipo] || '#475569'}1a;border:1px solid ${COR_TIPO[s.tipo] || '#475569'};font-size:.78rem">
+    <div style="display:inline-block;margin:4px 4px 0 0;padding:6px 10px;border-radius:6px;background:${COR_TIPO[s.tipo] || '#475569'}1a;border:1px solid ${COR_TIPO[s.tipo] || '#475569'};font-size:.78rem" title="${(s.evidencia || '').replace(/"/g, "'")}">
       <strong style="color:${COR_TIPO[s.tipo] || '#475569'}">${s.tipo}</strong> · ${s.rotulo}
     </div>
   `).join('');
