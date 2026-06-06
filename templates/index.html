@@ -890,6 +890,14 @@
           <label class="fl">Telefone</label>
           <input type="text" name="telefone" placeholder="(11) 99999-9999">
         </div>
+        <div>
+          <label class="fl">CEP</label>
+          <input type="text" name="cep" placeholder="01310-100">
+        </div>
+        <div>
+          <label class="fl">Número</label>
+          <input type="text" name="numero" placeholder="100">
+        </div>
       </div>
 
       <div class="card-section-title">Necessidades · Custo de vida e patrimônio</div>
@@ -2029,13 +2037,24 @@ async function dispararCotacao() {
     }
   });
 
+  // Valida dados obrigatórios antes de enviar (antes injetávamos fakes
+  // silenciosamente — quebrava MAG, gravava cotação com dados errados)
   const fd = new FormData();
   for (const [k, v] of _formData.entries()) fd.append(k, v);
-  if (!fd.get('cpf')) fd.set('cpf', '52998224725');
-  if (!fd.get('email')) fd.set('email', 'teste@blend.com');
-  if (!fd.get('telefone')) fd.set('telefone', '11999999999');
-  if (!fd.get('cep')) fd.set('cep', '01310100');
-  if (!fd.get('numero')) fd.set('numero', '100');
+  const obrigatorios = {
+    cpf:      'CPF',
+    email:    'E-mail',
+    telefone: 'Telefone',
+    cep:      'CEP',
+    numero:   'Número (endereço)',
+  };
+  const faltando = Object.entries(obrigatorios)
+    .filter(([k]) => !String(fd.get(k) || '').trim())
+    .map(([, lbl]) => lbl);
+  if (faltando.length) {
+    alert('Volte ao Passo 1 e preencha: ' + faltando.join(', '));
+    return;
+  }
   fd.set('blend', JSON.stringify(blend));
 
   const segsRunning = ['azos','mag'].filter(s => _seguradorasAtivas.includes(s));
