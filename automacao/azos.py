@@ -843,12 +843,58 @@ async def fase2_selecionar_coberturas(session_id: str, selecoes: list[dict],
             # grava como rascunho R$ 0. Clica "Ir para o Resumo" 1x e aguarda
             # — não preenche DPS (só queremos que o portal mantenha o valor).
             try:
-                print(f"[azos][fase2] BLEND parar_cotacao - clicando 'Ir para o Resumo' para persistir cotação no portal...", flush=True)
-                _avancou = await _clicar_continuar(page)
-                print(f"[azos][fase2] BLEND clicou continuar: {_avancou}", flush=True)
-                await page.wait_for_timeout(5_000)   # tempo pro Azos gravar
+                url_antes = page.url
+                print(f"[azos][fase2] BLEND parar_cotacao - URL antes={url_antes}", flush=True)
+
+                # Aguarda o botão habilitar (até 20s). Pode estar disabled
+                # enquanto o portal recalcula o prêmio.
+                avancou_url = False
+                for tentativa in range(8):
+                    habilitado = await _continuar_habilitado(page)
+                    if habilitado:
+                        print(f"[azos][fase2] BLEND botão habilitado na tentativa {tentativa}", flush=True)
+                        break
+                    print(f"[azos][fase2] BLEND tentativa {tentativa}: botão ainda BLOQUEADO, aguardando 2s...", flush=True)
+                    await page.wait_for_timeout(2_000)
+                else:
+                    # Se chegou no else (8 tentativas sem habilitar), dump do
+                    # body procurando mensagem de bloqueio
+                    try:
+                        body_txt = await page.inner_text("body")
+                        for marcador in ["valor máximo", "valor maximo", "limite", "inválido", "obrigatório"]:
+                            idx = body_txt.lower().find(marcador)
+                            if idx >= 0:
+                                trecho = body_txt[max(0, idx-100):idx+200].replace('\n', ' | ')
+                                print(f"[azos][fase2] BLEND BLOQUEIO inline '{marcador}': ...{trecho}...", flush=True)
+                                break
+                    except Exception:
+                        pass
+
+                # Tenta clicar até 3x — botão pode ainda estar bouncing de
+                # disabled<->enabled enquanto AZOS recalcula
+                for retry in range(3):
+                    _avancou = await _clicar_continuar(page)
+                    print(f"[azos][fase2] BLEND retry={retry} clicou_continuar={_avancou}", flush=True)
+                    if _avancou:
+                        await page.wait_for_timeout(3_500)
+                        # Verifica se URL realmente mudou (avançou pra resumo/proposta)
+                        if page.url != url_antes:
+                            avancou_url = True
+                            print(f"[azos][fase2] BLEND URL mudou: {url_antes} → {page.url}", flush=True)
+                            break
+                        else:
+                            print(f"[azos][fase2] BLEND URL não mudou ainda (click sem efeito) — retry", flush=True)
+                            await page.wait_for_timeout(1_500)
+                    else:
+                        await page.wait_for_timeout(2_000)
+
+                # Aguarda gravar
+                await page.wait_for_timeout(4_000)
                 await page.screenshot(path=str(_TMP / "azos_cotacao_persistida.png"), full_page=False)
-                print(f"[azos][fase2] BLEND cotação persistida em {page.url}", flush=True)
+                if avancou_url:
+                    print(f"[azos][fase2] BLEND ✅ cotação persistida em {page.url}", flush=True)
+                else:
+                    print(f"[azos][fase2] BLEND ⚠️ NÃO avançou da tela de coberturas — portal pode gravar R$ 0. URL final={page.url}", flush=True)
             except Exception as e:
                 print(f"[azos][fase2] BLEND falha ao persistir (ignorando): {str(e)[:200]}", flush=True)
 
