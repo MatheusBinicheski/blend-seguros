@@ -1118,10 +1118,10 @@
 <!-- TELA 3 — Lançamento -->
 <div class="tela" id="tela-3" style="display:none">
   <div class="card">
-    <h2>Passo 3 · Lançamento das Cotações</h2>
+    <h2>Passo 3 · Resultado das Cotações</h2>
     <p class="subtitle">
-      O Blend dispara o blend selecionado em cada seguradora ativa em paralelo (sequencial por
-      restrição de RAM). Acompanhe o status abaixo.
+      Cotando o blend em cada seguradora ativa (sequencial). Quando concluir, revise os prêmios
+      e envie para proposta.
     </p>
 
     <div id="launchList"></div>
@@ -1130,8 +1130,10 @@
 
     <div class="acoes-row">
       <button type="button" class="btn btn-secondary" onclick="irPara(2)">← Voltar editar blend</button>
-      <button type="button" class="btn btn-primary" id="btnDispararCotacao" onclick="dispararCotacao()">
-        Disparar cotações
+      <button type="button" class="btn btn-primary" id="btnEnviarProposta"
+              onclick="enviarParaProposta()" disabled
+              title="Aguarde a cotação concluir antes de enviar para proposta">
+        Enviar para proposta
       </button>
     </div>
   </div>
@@ -1917,7 +1919,7 @@ function recalcularResumo() {
 function prepararTela3() {
   const segsAtivas = SEGURADORAS.filter(s => _seguradorasAtivas.includes(s.id));
   document.getElementById('launchList').innerHTML = segsAtivas.map(s => `
-    <div class="launch-card" id="launch-${s.id}">
+    <div class="launch-card running" id="launch-${s.id}">
       <div class="ico">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:22px;height:22px;color:var(--text-mute)">
           <circle cx="12" cy="12" r="10"/>
@@ -1926,7 +1928,7 @@ function prepararTela3() {
       </div>
       <div class="launch-info">
         <div class="nome">${s.nome}</div>
-        <div class="msg" id="msg-${s.id}">Aguardando disparo · ${s.produto}</div>
+        <div class="msg" id="msg-${s.id}">Iniciando cotação · ${s.produto}</div>
       </div>
       <div class="premio" id="premio-${s.id}">—</div>
     </div>
@@ -1947,11 +1949,17 @@ function prepararTela3() {
       </div>
       <div class="resumo-cell destaque">
         <div class="label">Status</div>
-        <div class="valor" id="statusFinal" style="font-size:1.2rem">Aguardando lançamento</div>
-        <div class="pequeno">Clique "Disparar cotações" para começar</div>
+        <div class="valor" id="statusFinal" style="font-size:1.2rem">Cotando...</div>
+        <div class="pequeno">Os prêmios reais virão das seguradoras em alguns minutos</div>
       </div>
     </div>
   `;
+
+  // Auto-disparo da cotação ao entrar na tela. Botão "Enviar para Proposta"
+  // só habilita depois que a cotação real concluir. Isso evita a UX antiga
+  // onde o LP precisava clicar pra cotar (que não fazia sentido — a cotação
+  // sempre acontece, o que é decisão dele é enviar pra proposta).
+  setTimeout(() => dispararCotacao(), 200);
 }
 
 async function dispararCotacao() {
@@ -1995,8 +2003,11 @@ async function dispararCotacao() {
     return;
   }
 
-  const btn = document.getElementById('btnDispararCotacao');
-  btn.disabled = true;
+  const btn = document.getElementById('btnEnviarProposta');
+  if (btn) {
+    btn.disabled = true;
+    btn.title = 'Aguarde a cotação concluir';
+  }
 
   if (_audioBlob) {
     try {
@@ -2047,7 +2058,31 @@ async function dispararCotacao() {
       document.getElementById('msg-' + s).textContent = 'Erro: ' + err.message;
     });
     document.getElementById('statusFinal').textContent = 'Erro';
+    const btnRetry = document.getElementById('btnEnviarProposta');
+    if (btnRetry) { btnRetry.disabled = true; btnRetry.title = 'Cotação falhou — corrija e re-cote'; }
+  }
+}
+
+// Após a cotação concluir, o LP clica para enviar pra proposta nas seguradoras.
+// Implementação: por enquanto só registra a intenção e mostra confirmação —
+// o fluxo Playwright de "Editar Solução" / DPS / pagamento entra em sprint
+// dedicado. Esse botão deixa claro que cotação ≠ envio.
+async function enviarParaProposta() {
+  const btn = document.getElementById('btnEnviarProposta');
+  if (!btn || btn.disabled) return;
+  if (!confirm('Confirmar envio da cotação para Proposta? Isso vai gerar o número de proposta nas seguradoras (em breve).')) return;
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+  try {
+    // Por ora, só registra a intenção de envio. O motor de proposta entra em sprint dedicado.
+    document.getElementById('statusFinal').textContent = 'Enviada para proposta (registro local)';
+    btn.textContent = '✓ Enviada para proposta';
+    btn.classList.add('btn-secondary');
+    btn.classList.remove('btn-primary');
+  } catch (err) {
+    alert('Erro ao enviar para proposta: ' + err.message);
     btn.disabled = false;
+    btn.textContent = 'Enviar para proposta';
   }
 }
 
@@ -2089,14 +2124,27 @@ async function pollJob(jobId, segs) {
           const totalPremio = segs.reduce((acc, s) => acc + Number((r2[s] || {}).premio_mensal || 0), 0);
           document.getElementById('statusFinal').textContent =
             data.status === 'done'
-              ? 'Concluído · R$ ' + totalPremio.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2}) + '/mês'
+              ? 'Cotado · R$ ' + totalPremio.toLocaleString('pt-BR', {minimumFractionDigits:2,maximumFractionDigits:2}) + '/mês'
               : 'Falhou em parte das seguradoras';
-          document.getElementById('btnDispararCotacao').disabled = false;
+          // Habilita botão "Enviar para proposta" se houve ao menos um prêmio > 0
+          const btnProp = document.getElementById('btnEnviarProposta');
+          if (btnProp) {
+            if (data.status === 'done' && totalPremio > 0) {
+              btnProp.disabled = false;
+              btnProp.title = 'Confirmar envio da cotação para Proposta';
+            } else {
+              btnProp.disabled = true;
+              btnProp.title = data.status === 'done'
+                ? 'Sem prêmio retornado — revise o blend e re-cote'
+                : 'Cotação falhou';
+            }
+          }
           resolve();
         } else if (Date.now() - started > MAX) {
           clearInterval(timer);
           document.getElementById('statusFinal').textContent = 'Timeout';
-          document.getElementById('btnDispararCotacao').disabled = false;
+          const btnT = document.getElementById('btnEnviarProposta');
+          if (btnT) { btnT.disabled = true; btnT.title = 'Timeout — re-cote'; }
           resolve();
         }
       } catch(_){}
