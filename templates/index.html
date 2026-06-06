@@ -1159,6 +1159,7 @@ let _planejamento = null;
 let _formData = null;
 let _seguradorasAtivas = ['azos', 'mag'];
 let _audioBlob = null;
+let _audioAnalise = null;  // {texto, sinais, ajustes_cliente, ajustes_linhas}
 let _gravando = false;
 let _gravador = null;
 let _gravStart = 0;
@@ -1259,11 +1260,17 @@ async function toggleGravacao() {
         _audioBlob = new Blob(chunks, { type: 'audio/webm' });
         const url = URL.createObjectURL(_audioBlob);
         const wrap = document.getElementById('gravAudio');
-        wrap.innerHTML = `<audio controls src="${url}"></audio>`;
+        wrap.innerHTML = `<audio controls src="${url}"></audio>
+          <div id="audioAnaliseStatus" style="margin-top:10px;font-size:.85rem;color:var(--text-mute)">
+            Transcrevendo e detectando sinais...
+          </div>
+          <div id="audioSinaisLista" style="margin-top:10px"></div>`;
         wrap.style.display = 'block';
         document.getElementById('gravLimpar').style.display = 'inline-flex';
-        document.getElementById('gravStatus').textContent = 'Áudio salvo · pronto para reprodução';
+        document.getElementById('gravStatus').textContent = 'Áudio salvo · analisando localmente';
         stream.getTracks().forEach(t => t.stop());
+        // Dispara análise local (Whisper + regras) — não bloqueia UX
+        enviarAudioParaAnalise();
       };
       _gravador.start();
       _gravando = true;
@@ -1289,8 +1296,61 @@ async function toggleGravacao() {
   }
 }
 
+async function enviarAudioParaAnalise() {
+  if (!_audioBlob) return;
+  try {
+    const fd = new FormData();
+    fd.append('audio', _audioBlob, 'historia.webm');
+    const form = document.getElementById('form-cliente');
+    fd.append('cliente_nome', (form && form.nome.value) || '');
+    const res = await fetch('/audio-historia', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.erro || 'falha na análise');
+    _audioAnalise = data;
+    renderAudioSinais();
+    // Se já existe planejamento carregado, re-renderiza com os novos sinais
+    if (_planejamento && document.getElementById('tela-2').style.display === 'block') {
+      prepararTela2();
+    }
+  } catch (err) {
+    const st = document.getElementById('audioAnaliseStatus');
+    if (st) st.textContent = 'Falha ao analisar: ' + err.message;
+  }
+}
+
+function renderAudioSinais() {
+  const st = document.getElementById('audioAnaliseStatus');
+  const lista = document.getElementById('audioSinaisLista');
+  if (!st || !lista) return;
+  if (!_audioAnalise) {
+    st.textContent = 'Sem análise disponível';
+    return;
+  }
+  const sinais = _audioAnalise.sinais || [];
+  if (sinais.length === 0) {
+    st.textContent = `Transcrito (${(_audioAnalise.texto || '').length} chars), nenhum sinal específico detectado`;
+    lista.innerHTML = '';
+    return;
+  }
+  const COR_TIPO = {
+    profissao:   '#7c3aed',
+    doenca:      '#dc2626',
+    dependentes: '#0891b2',
+    patrimonio:  '#ca8a04',
+    atividade:   '#16a34a',
+    estilo:      '#64748b',
+  };
+  st.textContent = `${sinais.length} sinais detectados no áudio · serão aplicados na recomendação`;
+  lista.innerHTML = sinais.map(s => `
+    <div style="display:inline-block;margin:4px 4px 0 0;padding:6px 10px;border-radius:6px;background:${COR_TIPO[s.tipo] || '#475569'}1a;border:1px solid ${COR_TIPO[s.tipo] || '#475569'};font-size:.78rem">
+      <strong style="color:${COR_TIPO[s.tipo] || '#475569'}">${s.tipo}</strong> · ${s.rotulo}
+    </div>
+  `).join('');
+}
+
 function limparGravacao() {
   _audioBlob = null;
+  _audioAnalise = null;
   document.getElementById('gravAudio').innerHTML = '';
   document.getElementById('gravAudio').style.display = 'none';
   document.getElementById('gravLimpar').style.display = 'none';
@@ -1472,6 +1532,12 @@ async function carregarPlanejamento() {
   const tem_deps = document.querySelectorAll('#dep-list .dep-item').length > 0
     && [...document.querySelectorAll('#dep-list input')].some(i => i.value.trim());
   planFd.append('tem_dependentes', tem_deps ? 'sim' : '');
+  // Anexa sinais do áudio pra backend ajustar (auto-marcar linhas extras como
+  // quebra de ossos pra cirurgião, DG30 pra hipertenso, etc)
+  if (_audioAnalise) {
+    planFd.append('audio_ajustes_cliente', JSON.stringify(_audioAnalise.ajustes_cliente || {}));
+    planFd.append('audio_ajustes_linhas',  JSON.stringify(_audioAnalise.ajustes_linhas  || {}));
+  }
 
   try {
     const res = await fetch('/planejamento', { method: 'POST', body: planFd });
@@ -2056,6 +2122,16 @@ async function dispararCotacao() {
     return;
   }
   fd.set('blend', JSON.stringify(blend));
+  // Anexa sinais detectados no áudio pra backend ajustar (já refletidos no
+  // blend que o LP confirmou na tela 3, mas vão como referência/log)
+  if (_audioAnalise) {
+    fd.set('audio_analise', JSON.stringify({
+      texto:           _audioAnalise.texto || '',
+      sinais:          _audioAnalise.sinais || [],
+      ajustes_cliente: _audioAnalise.ajustes_cliente || {},
+      ajustes_linhas:  _audioAnalise.ajustes_linhas || {},
+    }));
+  }
 
   const segsRunning = ['azos','mag'].filter(s => _seguradorasAtivas.includes(s));
   segsRunning.forEach(s => {

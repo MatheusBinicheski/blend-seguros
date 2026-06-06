@@ -93,8 +93,10 @@ async def status(job_id: str):
 
 
 # ── POST /audio-historia ─────────────────────────────────────────────────────
-# Recebe gravação de áudio do Life Planner descrevendo a história do cliente.
-# Salva em /tmp/blend_audios/{timestamp}_{nome}.webm.
+# Recebe gravação de áudio do Life Planner descrevendo a história do cliente,
+# transcreve LOCALMENTE com faster-whisper, extrai sinais via regras
+# (profissões de risco, doenças, dependentes, esportes, sucessão) e retorna
+# os ajustes sugeridos pro `cliente` + `linhas` do planejamento.
 @app.post("/audio-historia")
 async def audio_historia(
     audio: UploadFile = File(...),
@@ -109,7 +111,26 @@ async def audio_historia(
         with open(destino, "wb") as f:
             f.write(await audio.read())
         print(f"[blend][audio] gravado: {destino} ({destino.stat().st_size} bytes)", flush=True)
-        return {"ok": True, "file": fname, "bytes": destino.stat().st_size}
+
+        # Roda transcrição + análise em uma task pra não bloquear o request
+        from automacao.audio_inteligencia import analisar_audio
+        # cliente_nome vem do form; outros campos não disponíveis aqui
+        cliente_stub = {"nome": cliente_nome}
+        analise = analisar_audio(str(destino), cliente_stub)
+
+        return {
+            "ok": True,
+            "file": fname,
+            "bytes": destino.stat().st_size,
+            "texto": analise.get("texto", ""),
+            "sinais": analise.get("sinais", []),
+            "ajustes_cliente": {
+                k: v for k, v in (analise.get("cliente_enriquecido") or {}).items()
+                if k != "nome"
+            },
+            "ajustes_linhas": analise.get("ajustes_linhas", {}),
+            "erro_analise":   analise.get("erro"),
+        }
     except Exception as e:
         return JSONResponse({"ok": False, "erro": str(e)[:200]}, status_code=500)
 
@@ -147,7 +168,10 @@ async def planejamento(
     estado_civil:   str  = Form("solteiro"),
     med_continuo:   str  = Form("nao"),
     tem_dependentes:str  = Form(""),
+    audio_ajustes_cliente: str = Form(""),
+    audio_ajustes_linhas:  str = Form(""),
 ):
+    import json as _json
     cliente = {
         "nome":           nome,
         "nascimento":     nascimento,
@@ -160,8 +184,45 @@ async def planejamento(
         "med_continuo":   med_continuo,
         "tem_dependentes": bool(tem_dependentes),
     }
+    # Aplica ajustes do áudio (form do LP vence sobre dedução, mas campos
+    # vazios são enriquecidos: ex: form sem fumante + áudio diz "fumo" → sim)
+    try:
+        ajustes_cli = _json.loads(audio_ajustes_cliente) if audio_ajustes_cliente else {}
+    except Exception:
+        ajustes_cli = {}
+    for k, v in ajustes_cli.items():
+        if str(cliente.get(k) or "").strip() in ("", "nao", "Solteira/o", "solteiro"):
+            cliente[k] = v
+    try:
+        ajustes_lin = _json.loads(audio_ajustes_linhas) if audio_ajustes_linhas else {}
+    except Exception:
+        ajustes_lin = {}
+
     grid = planejamento_grid(cliente, tipo_cobertura=tipo_cobertura)
+
+    # Aplica ajustes_linhas do áudio: ativa linhas extras + bumpa capital
+    if ajustes_lin:
+        for L in grid.get("linhas", []):
+            acao = ajustes_lin.get(L["id"])
+            if not acao:
+                continue
+            if acao in ("forcar_ativa", "forcar_ativa_max"):
+                L["ativo_default"] = True
+                L["audio_forcado"] = True
+                L["audio_motivo"]  = acao
+            if acao == "forcar_ativa_max":
+                # Sobe capital pro teto da linha (max do catálogo)
+                L["capital_sugerido"] = L.get("capital_max") or L.get("capital_sugerido")
+            if acao == "reduzir_capital":
+                # Mantém ativa mas reduz pro mínimo (perfil solteiro/sem deps)
+                L["capital_sugerido"] = max(L.get("capital_min") or 0,
+                                            (L.get("capital_sugerido") or 0) // 2)
+
     grid["blends_de_ouro"] = blends_de_ouro(cliente)
+    grid["audio_ajustes_aplicados"] = {
+        "cliente": ajustes_cli,
+        "linhas":  ajustes_lin,
+    }
     return JSONResponse(grid)
 
 
