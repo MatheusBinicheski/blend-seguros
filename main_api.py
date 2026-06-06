@@ -333,56 +333,60 @@ async def _run_cotacao(job_id: str, cliente: dict, saude: dict, blend: dict):
             result["azos"]["erro"] = "Nenhuma cobertura AZOS selecionada"
 
         # ── MAG ────────────────────────────────────────────────────────────
-        # Hoje o wrapper mag.cotar só conhece SAF 3061. Whole Life Sucessão e
-        # Term Life MAG ainda não têm fluxo Playwright dedicado — quando o LP
-        # selecionar essas linhas, o sistema retorna o prêmio ESTIMADO da grid
-        # (sem ir ao portal) e marca como "estimativa" na resposta.
+        # cotar_blend() roda no canal Vida Toda VD STOA cotando todas as
+        # linhas MAG no portal em uma sessão só. Linhas com nome_no_portal
+        # contendo "WHOLE LIFE" ou "TERM LIFE" são do canal PRIVATE VD STOA
+        # (fluxo UI diferente — botão "Editar Solução") e ainda não são cotadas
+        # automaticamente: retornam premio_estimado do catálogo.
         if mag_blend:
             try:
-                # Procura linha SAF (única com scraping real implementado hoje)
-                saf_line = next(
-                    (m for m in mag_blend if "saf" in (m.get("linha_id") or "").lower()
-                     or "saf" in (m.get("nome_no_portal") or "").lower()),
-                    None,
-                )
-                outras = [m for m in mag_blend if m is not saf_line]
+                _job_set(job_id, pct=70,
+                         msg="MAG: cotando produtos no canal Vida Toda VD STOA...")
 
-                premio_mag_total = 0.0
-                capital_mag_total = 0
-                produto_descricao = []
+                blend_para_mag = [
+                    {
+                        "linha_id":       m.get("linha_id"),
+                        "nome_no_portal": m.get("nome_no_portal"),
+                        "capital":        int(m.get("capital") or 0),
+                    }
+                    for m in mag_blend
+                ]
+                mag_out = await mag_mod.cotar_blend(cliente, blend_para_mag, headless=True)
 
-                # 1) Se SAF está no blend, cota de verdade no portal
-                if saf_line:
-                    _job_set(job_id, pct=70,
-                             msg="MAG: consultando SAF Essencial Familiar (3061)...")
-                    capital_mag = int(saf_line.get("capital") or 5_500)
-                    mag_out = await mag_mod.cotar(cliente, capital=capital_mag, headless=True)
-                    if mag_out.get("erro") and not mag_out.get("premio_mensal"):
-                        result["mag"]["erro"] = mag_out["erro"]
-                    else:
-                        premio_mag_total  += float(mag_out.get("premio_mensal") or 0)
-                        capital_mag_total += int(mag_out.get("capital") or 0)
-                        produto_descricao.append(mag_out.get("produto") or "SAF 3061")
+                premio_mag_total  = float(mag_out.get("premio_mensal_total") or 0)
+                capital_mag_total = sum(int(i.get("capital_real") or i.get("capital_pedido") or 0)
+                                        for i in (mag_out.get("itens") or []))
+                produto_descricao = [
+                    f"{i.get('nome_no_portal','?')}: R$ {i.get('premio_estimado') or 0:.2f}"
+                    for i in (mag_out.get("itens") or [])
+                    if i.get("premio_estimado")
+                ]
 
-                # 2) Outras linhas MAG (Whole Life / Term Life / DG / Cirurgias):
-                #    sem scraping real ainda — devolve estimativa do catálogo (campo
-                #    `premio_estimado_input` enviado pelo frontend, se houver).
-                for m in outras:
-                    p_est = float(m.get("premio_estimado") or 0)
-                    if p_est > 0:
-                        premio_mag_total  += p_est
-                        capital_mag_total += int(m.get("capital") or 0)
-                        produto_descricao.append(f"{m.get('linha_nome') or m.get('produto') or 'MAG'} (estimado)")
+                # Soma as estimativas dos produtos do canal PRIVATE (Whole Life,
+                # Term Life) que ficaram fora da cotação real
+                nao_cotados = mag_out.get("nao_cotados") or []
+                if nao_cotados:
+                    for m in mag_blend:
+                        if m.get("nome_no_portal") in nao_cotados:
+                            p_est = float(m.get("premio_estimado") or 0)
+                            if p_est > 0:
+                                premio_mag_total  += p_est
+                                capital_mag_total += int(m.get("capital") or 0)
+                                produto_descricao.append(
+                                    f"{m.get('nome_no_portal')}: R$ {p_est:.2f} (estimado, canal PRIVATE)"
+                                )
 
                 if premio_mag_total > 0:
                     result["mag"] = {
                         "premio_mensal": round(premio_mag_total, 2),
                         "capital":       capital_mag_total,
                         "produto":       " + ".join(produto_descricao) if produto_descricao else None,
+                        "itens":         mag_out.get("itens"),
+                        "nao_cotados":   nao_cotados,
                         "erro":          None,
                     }
-                elif not result["mag"].get("erro"):
-                    result["mag"]["erro"] = "Nenhuma linha MAG retornou prêmio"
+                else:
+                    result["mag"]["erro"] = mag_out.get("erro") or "Nenhuma linha MAG retornou prêmio"
             except Exception as e:
                 result["mag"]["erro"] = str(e)[:300]
         else:

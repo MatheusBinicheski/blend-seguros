@@ -381,45 +381,47 @@ async def _benefit_ids_for(page: Page, cod: str) -> list:
 
     Em 2026 o MAG mudou os IDs: aceita formatos novos com prefixos diferentes.
     Salva /tmp/mag_dom_inputs_{cod}.json com TODOS os inputs visíveis para debug.
+
+    Retry de até 8s — alguns produtos (DG VITAL, IPA+IFPD) montam os inputs
+    de forma assíncrona depois do click no dropdown. Antes a heurística caía
+    em inputs de OUTROS produtos (currency, benefits antigos) e quebrava o
+    fluxo (preenchia R$1.8tri num campo errado).
     """
-    info = await page.evaluate(f"""() => {{
-        const todos = [...document.querySelectorAll('input')].map(el => ({{
-            id:    el.id || '',
-            name:  el.name || '',
-            type:  el.type || '',
-            value: el.value || '',
-            placeholder: el.placeholder || '',
-            classes: el.className || '',
-            visivel: !!el.offsetParent,
-        }}));
-        const matches = [...document.querySelectorAll('input[id*="product_{cod}"]')]
-            .filter(el => el.id.toLowerCase().includes('benefit'))
-            .map(el => el.id);
-        return {{ todos, matches }};
-    }}""")
+    matches: list = []
+    info: dict = {}
+    for tentativa in range(16):
+        info = await page.evaluate(f"""() => {{
+            const todos = [...document.querySelectorAll('input')].map(el => ({{
+                id:    el.id || '',
+                name:  el.name || '',
+                type:  el.type || '',
+                value: el.value || '',
+                placeholder: el.placeholder || '',
+                classes: el.className || '',
+                visivel: !!el.offsetParent,
+            }}));
+            const matches = [...document.querySelectorAll('input[id*="product_{cod}"]')]
+                .filter(el => el.id.toLowerCase().includes('benefit'))
+                .map(el => el.id);
+            return {{ todos, matches }};
+        }}""")
+        matches = info.get("matches") or []
+        if matches:
+            break
+        await page.wait_for_timeout(500)
     try:
         import json as _json
         with open(f"/tmp/mag_dom_inputs_{cod}.json", "w") as _f:
             _json.dump(info, _f, indent=2, ensure_ascii=False)
     except Exception:
         pass
-    matches = info.get("matches") or []
     if not matches:
-        # Fallback: pega inputs visíveis que pareçam de valor monetário (têm R$/centavos)
-        candidatos = [
-            t for t in info.get("todos", [])
-            if t.get("visivel") and (
-                "benefi" in (t.get("id") or "").lower()
-                or "benefi" in (t.get("name") or "").lower()
-                or "R$" in (t.get("value") or "")
-                or "money" in (t.get("classes") or "").lower()
-                or "currency" in (t.get("classes") or "").lower()
-            )
-            and (t.get("id") or t.get("name"))
-        ]
-        print(f"  [MAG] _benefit_ids_for({cod}): matches vazio. "
-              f"Candidatos heurística: {[c.get('id') or c.get('name') for c in candidatos][:6]}", flush=True)
-        matches = [c["id"] for c in candidatos if c.get("id")]
+        # Falha controlada — NÃO cair em heurística que pega inputs de outros
+        # produtos. _adicionar_produto detecta a lista vazia e segue sem
+        # preencher (o produto fica em estado parcial e o erro é reportado).
+        print(f"  [MAG] _benefit_ids_for({cod}): NENHUM input encontrado após 8s. "
+              f"Total inputs visíveis: {sum(1 for t in info.get('todos', []) if t.get('visivel'))}",
+              flush=True)
     return matches
 
 
@@ -471,6 +473,27 @@ async def _adicionar_produto(page: Page, nome: str, capital):
     codigo_desejado = _m_cod.group(1) if _m_cod else None
     nome_limpo = _re.sub(r'\s*\(\d+\)\s*$', '', nome).strip()
 
+    # ANTES de tudo: espera qualquer overlay de loading do produto anterior
+    # sumir. Sem isso, o mouse.click do próximo produto cai em cima do
+    # ".loading" ou ".loading-container" (intercepta o evento de pointer e o
+    # React-Select nunca recebe o click).
+    try:
+        await page.wait_for_function(
+            """() => {
+                const sels = ['.loading-container', '.loading'];
+                for (const s of sels) {
+                    for (const el of document.querySelectorAll(s)) {
+                        if (el.offsetParent) return false;
+                    }
+                }
+                return true;
+            }""",
+            timeout=20_000,
+        )
+        print(f"  [wait] loading overlays gone", flush=True)
+    except Exception:
+        print(f"  [wait] overlay timeout — seguindo mesmo assim", flush=True)
+
     # O combobox de produto é o último input[aria-autocomplete="list"] na página
     combo = page.locator('input[aria-autocomplete="list"]').last
     try:
@@ -479,53 +502,138 @@ async def _adicionar_produto(page: Page, nome: str, capital):
         pass
     await combo.click(force=True)
     await page.wait_for_timeout(300)
+    # Limpa texto residual de uma seleção anterior que tenha falhado. Sem isso,
+    # o produto N+1 digitava por cima do texto do produto N (ex: depois de
+    # falhar "DOENÇAS GRAVES VITAL (3" no combo, o "SAF ESSENCIAL" virava
+    # "DOENÇAS GSAF ESSENCIAL FAMILIRAVES VITAL" — busca quebrada).
+    try:
+        cur_val = await combo.input_value()
+    except Exception:
+        cur_val = ""
+    if cur_val:
+        try:
+            # Triple-click seleciona todo o conteúdo do input; backspace apaga.
+            await combo.click(click_count=3)
+            await page.keyboard.press("Backspace")
+        except Exception:
+            try:
+                await combo.fill("")
+            except Exception:
+                pass
+        await page.wait_for_timeout(200)
     await combo.type(nome_limpo[:20], delay=60)
     await page.wait_for_timeout(2500)
 
-    # JS dropdown: 1º) match exato pelo código (NNNN), 2º) match por nome,
-    # 3º) primeira opção com padrão "NOME (CODE)".
+    # Localiza o item via JS e retorna texto, código E a posição (bbox) pra
+    # gerar gesto de mouse real via page.mouse.click(x, y) — el.click() do JS
+    # não dispara onChange do React-Select, ficando preso na seleção anterior.
+    # Get_by_text(exact) pode pegar elemento errado (chips de produtos já
+    # adicionados que têm o mesmo texto). bbox direto evita ambos.
     nome_busca = nome_limpo[:20].lower()
-    result = await page.evaluate("""({nomeBusca, codigoDesejado}) => {
-        // 1) match por código entre parênteses no fim
+    found = await page.evaluate("""({nomeBusca, codigoDesejado}) => {
+        function bbox(el) {
+            const r = el.getBoundingClientRect();
+            return { x: r.left + r.width/2, y: r.top + r.height/2 };
+        }
+        // Filtra só elementos visíveis dentro do menu do react-select (não
+        // chips já adicionados). Heurística: tem aria-selected, role=option,
+        // OU está numa div ancestral cujo id contém "menu" ou class "menu".
+        function ehOpcaoDeDropdown(el) {
+            if (el.getAttribute('role') === 'option') return true;
+            if (el.id && el.id.includes('--option-')) return true;
+            let p = el.parentElement;
+            while (p && p !== document.body) {
+                const cls = (p.className || '') + '';
+                const id  = (p.id || '') + '';
+                if (/menu|listbox|MenuList/i.test(cls) || /menu|listbox/i.test(id)) return true;
+                p = p.parentElement;
+            }
+            return false;
+        }
+        function pack(el, codigo, matched_by) {
+            const b = bbox(el);
+            return { text: (el.textContent||'').trim(), code: codigo, matched_by,
+                     id: el.id || null, ...b };
+        }
+        // 1) match por código entre parênteses no fim — APENAS dentro do menu
         if (codigoDesejado) {
             for (const el of document.querySelectorAll('div, li, span')) {
                 if (el.children.length > 0 || !el.offsetParent) continue;
+                if (!ehOpcaoDeDropdown(el)) continue;
                 const txt = (el.textContent || '').trim();
                 const m = txt.match(/\\((\\d+)\\)\\s*$/);
                 if (m && m[1] === codigoDesejado) {
-                    el.click();
-                    return { text: txt, code: m[1], matched_by: 'code' };
+                    return pack(el, m[1], 'code');
                 }
             }
         }
-        // 2) match por nome (substring lowercase)
+        // 2) match por nome (substring lowercase) — APENAS dentro do menu
         for (const el of document.querySelectorAll('div, li, span')) {
             if (el.children.length > 0 || !el.offsetParent) continue;
+            if (!ehOpcaoDeDropdown(el)) continue;
             const txt = (el.textContent || '').trim();
             if (txt.toLowerCase().includes(nomeBusca)) {
                 const m = txt.match(/\\((\\d+)\\)/);
-                el.click();
-                return { text: txt, code: m ? m[1] : null, matched_by: 'name' };
+                return pack(el, m ? m[1] : null, 'name');
             }
         }
-        // 3) fallback: primeira opção com padrão "NOME (CODE)"
+        // 3) fallback: primeira opção com (CODE) no fim — APENAS no menu
         for (const el of document.querySelectorAll('div, li, span')) {
             if (el.children.length > 0 || !el.offsetParent) continue;
+            if (!ehOpcaoDeDropdown(el)) continue;
             const txt = (el.textContent || '').trim();
             const m = txt.match(/^.+\\((\\d+)\\)$/);
             if (m) {
-                el.click();
-                return { text: txt, code: m[1], matched_by: 'fallback' };
+                return pack(el, m[1], 'fallback');
             }
         }
         return null;
     }""", {"nomeBusca": nome_busca, "codigoDesejado": codigo_desejado})
 
     codigo = None
-    if result:
-        codigo = result.get("code")
-        print(f"  [JS] selecionado: {result.get('text')} (matched_by={result.get('matched_by')})", flush=True)
-        await page.screenshot(path="/tmp/mag_produto_selecionado.png", full_page=True)
+    if found:
+        codigo = found.get("code")
+        texto_alvo = found.get("text") or ""
+        x, y = found.get("x"), found.get("y")
+        opt_id = found.get("id")
+        print(f"  [JS] localizado: {texto_alvo} (matched_by={found.get('matched_by')}, x={x:.0f} y={y:.0f}, id={opt_id})", flush=True)
+
+        # ESTRATÉGIA: click via ID estável do react-select (id="react-select-N-
+        # option-K"). Playwright lida com scroll/overlay. Para produtos válidos
+        # do canal este caminho funciona sempre. Produtos em estado read-only
+        # (ex: DG VITAL 3532 no canal VIDA TODA VD STOA) não respondem a
+        # nenhum click e devem ser filtrados ANTES em cotar_blend.
+        async def _combo_val():
+            try:
+                return await combo.input_value()
+            except Exception:
+                return ""
+
+        val_apos = ""
+        if opt_id:
+            try:
+                await page.locator(f"#{opt_id}").click(timeout=4000, force=True)
+                await page.wait_for_timeout(900)
+                val_apos = await _combo_val()
+                print(f"  [click] locator(#{opt_id}) → combo='{val_apos[:40]}'", flush=True)
+            except Exception as e_lc:
+                print(f"  [click] locator falhou: {str(e_lc)[:80]}", flush=True)
+                val_apos = "fail"
+
+        if val_apos.strip() or not opt_id:
+            await page.mouse.click(x, y)
+            await page.wait_for_timeout(900)
+            val_apos = await _combo_val()
+            print(f"  [click] mouse({x:.0f},{y:.0f}) → combo='{val_apos[:40]}'", flush=True)
+
+        if val_apos.strip():
+            print(f"  ⚠️ '{texto_alvo}' NÃO foi adicionado (combo ainda='{val_apos[:30]}')", flush=True)
+            try:
+                await combo.click(click_count=3)
+                await page.keyboard.press("Backspace")
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
     else:
         # Captura todas as opções visíveis no dropdown para diagnóstico
         try:
@@ -1000,8 +1108,12 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
             premio_total = soma_contrib
 
         for sel in selecoes:
-            # Acha o capital real para esta seleção (pode ser fixo do produto)
-            cap_real = float(sel.get("valor", 0))
+            # Acha o capital + prêmio REAL para esta seleção pelo código (NNNN)
+            # no nome — match em `valores_reais` (lidos do DOM antes do CONFIRMAR).
+            # Antes dividia premio_total por len(selecoes) → média (errado pra blend
+            # multi-produto). Agora usa `contribution` REAL por produto.
+            cap_real    = float(sel.get("valor", 0))
+            premio_real = None
             import re as _re
             m_cod = _re.search(r'\((\d+)\)\s*$', sel.get("nome", ""))
             if m_cod:
@@ -1011,13 +1123,28 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
                         b = _parse_brl(v.get("benefit", ""))
                         if b > 0:
                             cap_real = b
+                        contrib = _parse_brl(v.get("contribution", ""))
+                        if contrib > 0:
+                            premio_real = contrib
                         break
+            # Sem contribution real → produto não foi adicionado corretamente
+            # OU o portal não retornou o valor desse produto. Reporta erro
+            # (em vez de dividir o total — isso falseava prêmios em blends
+            # multi-produto e enganava o LP).
+            erro = None
+            if premio_real is None:
+                if len(selecoes) == 1 and premio_total > 0:
+                    # Caso de 1 produto só — premio_total == contribution dele.
+                    premio_real = premio_total
+                else:
+                    erro = "produto adicionado mas sem contribution no DOM (capital ou seleção pode não ter sido aceita)"
             resultados.append(ResultadoCotacao(
                 seguradora="mag",
                 cobertura_nome=sel["nome"],
                 valor_capital=cap_real,
-                premio_mensal=round(premio_total / max(len(selecoes), 1), 2),
+                premio_mensal=premio_real if premio_real is not None else 0.0,
                 link_proposta=page.url,
+                erro=erro,
             ))
 
     except Exception as e:
@@ -1042,12 +1169,70 @@ async def fase2_finalizar(session_id: str, selecoes: list[dict]) -> list[Resulta
 async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) -> dict:
     """
     Faz cotação MAG SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061) para o capital informado.
+    Mantido por compatibilidade — `cotar_blend()` é o caminho novo para múltiplos produtos.
+
     Retorna {"premio_mensal": float|None, "capital": int, "erro": str|None}.
     """
-    out = {"premio_mensal": None, "capital": int(capital), "erro": None,
-           "produto": "SAF ESSENCIAL FAMILIAR (3061)"}
+    blend = [{
+        "linha_id": "saf_essencial",
+        "nome_no_portal": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)",
+        "capital": int(capital),
+    }]
+    r = await cotar_blend(cliente, blend, headless=headless)
+    # Adapta resposta multi-produto para o schema antigo single-produto
+    itens = r.get("itens") or []
+    out = {
+        "premio_mensal": r.get("premio_mensal_total"),
+        "capital":       int(itens[0]["capital_real"]) if itens else int(capital),
+        "produto":       "SAF ESSENCIAL FAMILIAR (3061)",
+        "erro":          r.get("erro"),
+    }
+    return out
+
+
+async def cotar_blend(cliente: dict, blend: list[dict], headless: bool = True) -> dict:
+    """
+    Cota MULTIPLOS produtos MAG no canal "VIDA TODA VD STOA" em uma sessão.
+
+    Argumentos:
+        cliente: dados do segurado (mesmo schema usado pelo SAF).
+        blend: lista de seleções no formato
+            [{"linha_id": str, "nome_no_portal": str (com (NNNN)), "capital": int}, ...]
+
+    Retorno:
+        {
+          "premio_mensal_total": float|None,
+          "itens": [{"linha_id", "nome_no_portal", "capital_pedido", "capital_real",
+                     "premio_estimado", "erro"}],
+          "erro": str|None,
+          "nao_cotados": [str],   # produtos do canal PRIVATE ou similares ignorados
+        }
+
+    Nota: produtos do canal PRIVATE VD STOA (Whole Life Sucessão, Term Life)
+    NÃO são cotados aqui — exigem fluxo dedicado e ficam em `nao_cotados`.
+    """
+    out = {"premio_mensal_total": None, "itens": [], "erro": None, "nao_cotados": []}
+
+    # Separa produtos de canais dedicados (não cotáveis no VIDA TODA VD STOA)
+    # - WHOLE LIFE / TERM LIFE: canal PRIVATE VD STOA
+    # - DOENÇAS GRAVES VITAL (3532): canal DG VITAL dedicado (aparece no menu
+    #   mas é estado read-only no VIDA TODA VD STOA)
+    cotaveis = []
+    for item in blend:
+        nm = (item.get("nome_no_portal") or "").upper()
+        if "WHOLE LIFE" in nm or "TERM LIFE" in nm:
+            out["nao_cotados"].append(item.get("nome_no_portal"))
+            continue
+        if "DOENÇAS GRAVES VITAL" in nm or "(3532)" in nm:
+            out["nao_cotados"].append(item.get("nome_no_portal"))
+            continue
+        cotaveis.append(item)
+
+    if not cotaveis:
+        out["erro"] = "Nenhum produto MAG cotável no blend (todos são do canal PRIVATE)"
+        return out
+
     try:
-        # Adapta dict do form unificado (appguardianseguros) ao schema esperado pelo MAG.
         dados = {
             **cliente,
             "renda_mensal": str(cliente.get("renda_mensal") or "5000"),
@@ -1060,23 +1245,44 @@ async def cotar(cliente: dict, capital: int = 300_000, headless: bool = True) ->
             out["erro"] = r1.erro or "fase1 falhou"
             return out
 
-        cotacoes = await fase2_finalizar(r1.session_id, [
-            {"nome": "SAF ESSENCIAL FAMILIAR + PAIS E SOGROS (3061)", "valor": int(capital)},
-        ])
-        if not cotacoes:
-            out["erro"] = "Nenhuma cotação retornada"
-            return out
-        c = cotacoes[0]
-        if c.erro:
-            out["erro"] = c.erro[:200]
-        out["premio_mensal"] = float(c.premio_mensal) if c.premio_mensal else None
-        # Reporta o capital REAL aceito pela MAG (SAF 3061 tem capital fixo do
-        # produto — o valor que enviamos é ignorado pela seguradora).
-        if c.valor_capital and c.valor_capital > 0:
-            out["capital"] = int(c.valor_capital)
-        # Falha explícita quando produto não foi encontrado / prêmio zerou silenciosamente
-        if out["premio_mensal"] is None and not out.get("erro"):
-            out["erro"] = "MAG não retornou prêmio — produto pode ter mudado de nome no catálogo"
+        selecoes_fase2 = [
+            {"nome": item["nome_no_portal"], "valor": int(item.get("capital") or 0)}
+            for item in cotaveis
+        ]
+        cotacoes = await fase2_finalizar(r1.session_id, selecoes_fase2)
+
+        # Mapeia retorno por (nome_no_portal) → ResultadoCotacao
+        by_name = {c.cobertura_nome: c for c in cotacoes}
+        soma = 0.0
+        algum_sucesso = False
+        for item in cotaveis:
+            nome = item["nome_no_portal"]
+            c = by_name.get(nome)
+            entrada = {
+                "linha_id":        item.get("linha_id"),
+                "nome_no_portal":  nome,
+                "capital_pedido":  int(item.get("capital") or 0),
+                "capital_real":    None,
+                "premio_estimado": None,
+                "erro":            None,
+            }
+            if c is None:
+                entrada["erro"] = "produto não retornado pela MAG"
+            else:
+                if c.erro:
+                    entrada["erro"] = c.erro[:200]
+                if c.premio_mensal:
+                    entrada["premio_estimado"] = float(c.premio_mensal)
+                    soma += float(c.premio_mensal)
+                    algum_sucesso = True
+                if c.valor_capital and c.valor_capital > 0:
+                    entrada["capital_real"] = int(c.valor_capital)
+            out["itens"].append(entrada)
+
+        if algum_sucesso:
+            out["premio_mensal_total"] = round(soma, 2)
+        else:
+            out["erro"] = "Nenhum produto MAG retornou prêmio"
     except Exception as e:
         out["erro"] = str(e)[:200]
     return out
