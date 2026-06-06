@@ -605,6 +605,28 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
                                           "hospitalar", "renda")
     def _e_assistencia(tp): return tp == "assistencia"
 
+    # Dentro de cada grupo_exclusivo só UMA linha pode estar ativa por
+    # default (ex: grupo "morte" tem tradicional + term_life + whole_life —
+    # contratar os 3 ao mesmo tempo é redundante). A "principal" é a 1ª linha
+    # do grupo no catálogo, exceto:
+    #   - grupo "doencas_graves": dg30 (completo) prefere idade >= 40
+    #   - grupo "morte": whole_life prefere quando renda >= 30k (alta renda /
+    #     foco em sucessão), senão tradicional
+    principais_por_grupo: dict[str, str] = {}
+    for L in _LINHAS_COMPARATIVAS:
+        ge = L.get("grupo_exclusivo")
+        if not ge or ge in principais_por_grupo:
+            continue
+        # Default: primeira linha do grupo no catálogo
+        principais_por_grupo[ge] = L["id"]
+    # Override por perfil: DG30 pra 40+, Whole Life pra renda alta
+    if idade >= 40 and "doencas_graves" in principais_por_grupo:
+        principais_por_grupo["doencas_graves"] = "doencas_graves_dg30"
+    if renda >= 30_000 and "morte" in principais_por_grupo:
+        # Renda alta tende a precisar de Whole Life pra sucessão patrimonial.
+        # Term Life ainda fica como alternativa que o LP pode ativar manual.
+        principais_por_grupo["morte"] = "morte_whole_life"
+
     linhas = []
     for L in _LINHAS_COMPARATIVAS:
         # Capital sugerido
@@ -679,6 +701,13 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
             ativo_default = quer_em_vida
         else:  # assistencia / funeral
             ativo_default = True
+
+        # Dentro de grupo_exclusivo: só a "principal" fica ativa por default.
+        # As outras linhas continuam visíveis no blend (LP pode trocar com 1
+        # clique) mas não contam pro subtotal estimado.
+        ge = L.get("grupo_exclusivo")
+        if ge and principais_por_grupo.get(ge) != L["id"]:
+            ativo_default = False
 
         linhas.append({
             "id":             L["id"],
