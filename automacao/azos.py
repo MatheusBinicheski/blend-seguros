@@ -8,8 +8,10 @@ from pathlib import Path
 
 AZOS_URL_LOGIN = "https://corretores.azos.com.br/login"
 AZOS_URL_SIM   = "https://contratacao.azos.com.br/simulacao/dados-pessoais"
-# Hardcode: env grs4027 ficou USER_DISABLED no Firebase Azos.
-AZOS_EMAIL = "grsouza93ip@gmail.com"
+# Configurável via env var; default volta pra conta antiga caso a env não esteja
+# setada. Histórico: env grs4027 ficou USER_DISABLED no Firebase Azos, reativada
+# em 17/06/2026 e setada como padrão de novo via env AZOS_EMAIL.
+AZOS_EMAIL = os.getenv("AZOS_EMAIL", "grsouza93ip@gmail.com")
 AZOS_SENHA = os.getenv("AZOS_SENHA", "1964Dns#*")
 
 # Pasta temporária cross-platform (/tmp no Linux/Mac, %TEMP% no Windows)
