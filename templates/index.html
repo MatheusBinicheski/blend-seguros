@@ -1093,6 +1093,11 @@
     </div>
     <div class="seg-grid" id="segPickGrid"></div>
 
+    <!-- Painel do Auditor — fontes oficiais, avisos, template profissional -->
+    <div id="painelAuditor" style="display:none; margin: 18px 0; padding: 14px 16px;
+                                   border: 1px solid #b8c5d6; border-radius: 8px;
+                                   background: #f5f8fc;"></div>
+
     <div class="card-section-title">Blends de Ouro <small style="text-transform:none;letter-spacing:0;color:var(--text-mute);font-weight:400">— presets recomendados pelo perfil</small></div>
     <div class="alerta-info">
       Clique em um preset para aplicar de uma vez as escolhas de seguradora por linha.
@@ -1555,10 +1560,85 @@ async function carregarPlanejamento() {
       if (L.mag)  L.mag.selecionado  = (L.escolhido_default === 'mag')  && L.ativo_default;
     });
     _aplicarMutexInicial();
+    renderAuditor();
     renderBlendsDeOuro();
     renderTabelaComparativa();
   } catch(err) {
     alert('Erro carregando planejamento: ' + err.message);
+  }
+}
+
+// ── Painel do Auditor ─────────────────────────────────────────────────────
+function renderAuditor() {
+  const box = document.getElementById('painelAuditor');
+  if (!box || !_planejamento) return;
+  const tpl     = _planejamento.template_profissao || {};
+  const avisos  = _planejamento.avisos_auditor || [];
+  const avMod   = _planejamento.avisos_modelo  || [];
+  const resumo  = _planejamento.resumo_auditavel_md || '';
+  const modo    = _planejamento.modo_simplificado;
+
+  const partes = [];
+
+  if (tpl.rotulo) {
+    const obsLines = [];
+    if (tpl.modelo_mag_obs) obsLines.push(`<div style="margin-top:4px;font-size:12px;color:#445"><b>MAG:</b> ${tpl.modelo_mag_obs}</div>`);
+    if (tpl.azos_obs)       obsLines.push(`<div style="margin-top:4px;font-size:12px;color:#445"><b>AZOS:</b> ${tpl.azos_obs}</div>`);
+    partes.push(`
+      <div style="font-weight:600;color:#13325c;">🧠 Template profissional: ${tpl.rotulo}</div>
+      ${obsLines.join('')}
+    `);
+  }
+
+  const todosAvisos = [...avMod, ...avisos];
+  if (todosAvisos.length) {
+    const chips = todosAvisos.slice(0, 12).map(a => {
+      const cor = a.nivel === 'erro' ? '#c0392b'
+                 : a.nivel === 'aviso' ? '#b6852a' : '#456';
+      return `<div style="padding:6px 8px;margin:4px 0;border-left:3px solid ${cor};
+                          background:#fff;border-radius:4px;font-size:12px">
+                <b style="color:${cor}">[${(a.nivel||'').toUpperCase()}]</b>
+                <i style="color:#789">${a.linha_id || ''}</i> — ${a.mensagem || ''}
+              </div>`;
+    }).join('');
+    partes.push(`
+      <details style="margin-top:10px;" open>
+        <summary style="cursor:pointer;font-weight:600;color:#13325c">
+          ⚠ Avisos do Auditor (${todosAvisos.length})
+        </summary>
+        ${chips}
+      </details>
+    `);
+  }
+
+  if (resumo) {
+    const html = resumo
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    partes.push(`
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer;font-weight:600;color:#13325c">
+          📋 Resumo auditável (markdown) — fontes citadas do Manual Azos + Dicas MAG
+        </summary>
+        <pre style="white-space:pre-wrap;background:#fff;padding:12px;
+                    border-radius:6px;font-size:11px;font-family:'SF Mono',Menlo,monospace;
+                    color:#23304a;max-height:500px;overflow:auto;margin-top:8px;">${html}</pre>
+      </details>
+    `);
+  }
+
+  if (modo === 'vitalicio_sem_resgate') {
+    partes.unshift(`<div style="background:#e6f2ff;padding:6px 8px;border-radius:4px;
+                                font-size:12px;color:#13325c;margin-bottom:8px">
+      ⚓ Modo simplificado MVP: <b>Vitalício sem resgate</b>. Term Life e TR1 desabilitados como principais.
+    </div>`);
+  }
+
+  if (partes.length) {
+    box.innerHTML = partes.join('');
+    box.style.display = '';
+  } else {
+    box.innerHTML = '';
+    box.style.display = 'none';
   }
 }
 

@@ -26,7 +26,9 @@ load_dotenv()
 
 from automacao.azos        import fase1_dados_pessoais, fase2_selecionar_coberturas
 from automacao         import mag as mag_mod
-from automacao.recomendador import planejamento_grid, blends_de_ouro
+from automacao.recomendador import (
+    planejamento_grid, blends_de_ouro, relatorio_catalogo, gerar_resumo_auditavel,
+)
 
 app   = FastAPI(title="Blend Seguros — Life Planner")
 _BASE = Path(__file__).parent
@@ -82,6 +84,13 @@ async def index():
 async def health():
     ativos = sum(1 for j in _jobs.values() if j["status"] in ("queued", "running"))
     return {"status": "ok", "jobs_ativos": ativos}
+
+
+@app.get("/diagnostico/catalogo")
+async def diagnostico_catalogo():
+    """Roda o auditor estático contra o catálogo. Útil pra ver erros de
+    pareamento, falta de fontes, coberturas Azos oficiais não cobertas."""
+    return JSONResponse(relatorio_catalogo())
 
 
 @app.get("/status/{job_id}")
@@ -170,6 +179,7 @@ async def planejamento(
     tem_dependentes:str  = Form(""),
     audio_ajustes_cliente: str = Form(""),
     audio_ajustes_linhas:  str = Form(""),
+    modo_simplificado:     str = Form(""),
 ):
     import json as _json
     cliente = {
@@ -198,7 +208,11 @@ async def planejamento(
     except Exception:
         ajustes_lin = {}
 
-    grid = planejamento_grid(cliente, tipo_cobertura=tipo_cobertura)
+    grid = planejamento_grid(
+        cliente,
+        tipo_cobertura=tipo_cobertura,
+        modo_simplificado=modo_simplificado,
+    )
 
     # Aplica ajustes_linhas do áudio: ativa linhas extras + bumpa capital
     if ajustes_lin:
@@ -223,6 +237,11 @@ async def planejamento(
         "cliente": ajustes_cli,
         "linhas":  ajustes_lin,
     }
+    # Resumo auditável (markdown) embutido no payload — UI pode mostrar em <details>
+    try:
+        grid["resumo_auditavel_md"] = gerar_resumo_auditavel(cliente, grid)
+    except Exception as e:  # noqa: BLE001
+        grid["resumo_auditavel_md"] = f"_(falha ao gerar resumo: {e})_"
     return JSONResponse(grid)
 
 

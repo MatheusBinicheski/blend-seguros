@@ -7,16 +7,31 @@ Cirurgias, Assistência Funeral etc.) — para cada linha, AZOS e MAG aparecem
 lado a lado com prêmio estimado. O Life Planner edita o capital sugerido e
 escolhe qual seguradora cobre cada linha para montar o blend final.
 
-Catálogo calibrado pelo material "Montando um Blend v2" (Stoa, 2025/2026):
-  - Morte: AZOS só tem Tradicional (TR1); MAG tem Term Life e Whole Life nivelados.
-  - DG: AZOS DG13/DG30; MAG Plus (10d) / Premium (28d).
-  - DIH: AZOS R$51,30/1k diária; MAG R$64,68/1k.
+Catálogo calibrado pelo material "Montando um Blend v2" (Stoa, 2025/2026)
++ Manual de Subscrição AZOS Abril/26 v2 + Dicas Underwriting MAG Ago/23 v1.9:
+
+  - Morte: AZOS Tradicional (TR1); MAG Term Life e Whole Life nivelados (canal PRIVATE).
+  - Morte Acidental (MAC): AZOS oferece até R$1MM avulso (Manual Azos pg 4, 17);
+    MAG embutido em pacotes DIT/SAF.
+  - Invalidez: AZOS separa IPTA Majorada (acidente, até R$3MM, 12 eventos),
+    IPTA Majorada Estendida (médico/dentista, até R$1MM) e IPT (qualquer
+    causa, até R$1MM, 11 eventos). MAG IPA+IFPD majorada (768/769/2279).
+  - DG: AZOS DG13 (13 doenças)/DG30 (30 doenças); MAG DG Plus 10d ou 28d.
+    DG VITAL (MAG 3532) é RIDER de câncer-only, cap R$200k, NÃO comparável
+    com DG13/DG30 (linha própria "doencas_graves_vital_cancer").
+  - DIH: AZOS até R$1k/diária (R$500 se 61-65), 200 diárias/evento;
+    MAG R$3k/diária sem UTI ou R$9k com Adicional UTI 200%.
+  - Cirurgias: AZOS Cirurgias 2.0 (R$100k, 652 procs); MAG Cirurgias+Amparo.
+  - Rupturas e Fraturas (REF): AZOS até R$300k. MAG sem cobertura.
   - SAF MAG: 3 tiers com capital fixo (Essencial 5.5k / Plus 10k / Premium 15k).
 
 Taxas (R$/mês por R$1.000 de capital) calibradas a partir das tabelas do PDF
 para perfil-base (homem 33a, não fumante) e do fator idade (+40% a cada 10
 anos acima de 35) — substituídas pelos prêmios reais quando a pré-simulação
 Playwright for executada.
+
+Limites por idade × renda (clamp) e idade de corte vivem em
+`automacao.auditor_catalogo`, fonte: Manual Azos pg 1, 14-20.
 """
 from datetime import date
 
@@ -119,9 +134,11 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "susep": "15414.604991/2023-12",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.17,
-            "min": 50_000, "max": 3_000_000,
+            "min": 50_000, "max": 5_000_000,
             "fonte": "calibrada",
-            "obs": "Taxa ano 1 (~R$104,67/MM p/ 33a no PDF v2; R$199/1,2MM p/ 36a na cotação real). Reajusta com idade.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4, 14, 16",
+            "idade_corte_anos": None,  # vitalício enquanto pagar
+            "obs": "Taxa ano 1 (~R$104,67/MM p/ 33a no PDF v2; R$199/1,2MM p/ 36a na cotação real). Reajusta com idade. Capital máximo absoluto R$5MM (sujeito a faixa renda/idade, ver auditor).",
         },
         "mag": {
             "disponivel": False,
@@ -151,9 +168,11 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.18,
             "min": 100_000, "max": 10_000_000,
             "fonte": "estimada",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 13 (Private Solutions Cobertura MORTE)",
+            "idade_corte_anos": None,  # termina no fim do prazo
             "cotacao_real": False,
             "canal_mag": "PRIVATE VD STOA",
-            "obs": "Disponível só no modelo 'PRIVATE VD STOA' do portal MAG (UI diferente, botão 'Editar Solução'). Fluxo de cotação dedicado em roadmap — por ora exibe prêmio estimado. R$183,06/MM p/ 33a, 20 anos (PDF v2).",
+            "obs": "Disponível só no modelo 'PRIVATE VD STOA' do portal MAG (UI diferente, botão 'Editar Solução'). Fluxo de cotação dedicado em roadmap — por ora exibe prêmio estimado. R$183,06/MM p/ 33a, 20 anos (PDF v2). Capital acima R$3MM exige tele entrevista + exames; acima R$12MM exige comprovante de renda.",
         },
     },
 
@@ -180,18 +199,21 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.55,
             "min": 1_000_000, "max": 25_000_000,
             "fonte": "estimada",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 13",
+            "idade_corte_anos": None,
             "cotacao_real": False,
             "canal_mag": "PRIVATE VD STOA",
-            "obs": "Disponível só no modelo 'PRIVATE VD STOA' do portal MAG (UI diferente). Fluxo dedicado em roadmap — por ora exibe prêmio estimado. Capital R$1MM-25MM. Idade 25-70.",
+            "aviso_privet": "Privet VD STOA exige prêmio mensal mínimo R$400,00 — capitais menores que R$1MM serão recusados ou exigirão outro modelo.",
+            "obs": "Disponível só no modelo 'PRIVATE VD STOA' do portal MAG (UI diferente). Fluxo dedicado em roadmap — por ora exibe prêmio estimado. Capital R$1MM-25MM. Idade 25-70. Capital acima R$3MM exige tele/exames; >R$6MM idade>60 exige Ergométrico; >R$12MM exige comprovante de renda.",
         },
     },
 
     # ── MORTE ACIDENTAL ────────────────────────────────────────────────────
     {
         "id": "morte_acidental",
-        "nome": "Morte Acidental",
+        "nome": "Morte Acidental (MAC)",
         "tipo": "morte",
-        "descricao": "Indenização extra quando a morte é decorrente de acidente pessoal coberto.",
+        "descricao": "Indenização extra quando a morte é decorrente de acidente pessoal coberto. Acumula com Morte para capitais acima de R$3MM (limite do par soma).",
         "anos_renda": 5,
         "capital_min": 50_000, "capital_max": 1_000_000,
         "azos": {
@@ -202,20 +224,34 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.05,
             "min": 50_000, "max": 1_000_000,
             "fonte": "calibrada",
-            "obs": "Portal AZOS aceita no máximo R$ 1.000.000,00. Capitais acima travam o botão 'Ir para o Resumo'.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4, 17",
+            "idade_corte_anos": None,
+            "obs": "Cobertura oficial AZOS (até R$1MM). Portal aceita no máx R$1MM. Capitais acima travam 'Ir para o Resumo'. Vitalício enquanto pagar.",
         },
         "mag": {
-            "disponivel": False,
-            "obs": "Componente embutido nos pacotes SAF MAG — não comparável isoladamente.",
+            "disponivel": True,
+            "produto": "MAC (rider de IPA + IFPD / DIT / SAF)",
+            "nome_no_portal": "MAC",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.06,
+            "min": 50_000, "max": 1_000_000,
+            "fonte": "estimada",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 6 (Private Solutions cobertura MAC) + pg 7 (lista riders Vida Toda)",
+            "idade_corte_anos": None,
+            "cotacao_real": False,
+            "canal_mag": "embutido em DIT (2398) ou Private Riders",
+            "obs": "MAG oferece MAC como rider de DIT/IPA+IFPD/SAF (modelo Vida Toda VD STOA) ou Winsocial (como garantia básica quando MQC não cabe). Vide pg 6-7 das Dicas. Cobertura isolada não vendida no canal corretor — usar pacote.",
         },
     },
 
     # ── INVALIDEZ PERMANENTE TOTAL (IPT — qualquer causa) ────────────────
     {
         "id": "invalidez_permanente",
-        "nome": "Invalidez Permanente Total (IPT)",
+        "nome": "Invalidez Permanente Total (IPT) — qualquer causa",
         "tipo": "invalidez",
-        "descricao": "Indenização em caso de invalidez permanente total por qualquer causa (doença ou acidente). AZOS e MAG são as poucas que vendem avulso.",
+        "grupo_exclusivo": "invalidez_qualquer_causa",
+        "grupo_titulo": "Invalidez por qualquer causa — escolha 1 modalidade por seguradora",
+        "descricao": "Indenização por invalidez permanente total por qualquer causa (doença ou acidente). AZOS IPT (11 eventos, cancela aos 75a). MAG IPA Majorada + IFPD (Invalidez Funcional Permanente por Doença).",
         "anos_renda": 10,
         "capital_min": 100_000, "capital_max": 1_000_000,
         "azos": {
@@ -226,7 +262,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.070,
             "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
-            "obs": "R$70,44/MM p/ 33a no PDF v2. AZOS vende avulso. Abrangência OK. IPTA Majorada disponível separada.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (IPT — 11 eventos), pg 18 (capital por renda/idade)",
+            "idade_corte_anos": 75,
+            "obs": "11 eventos cobertos (Manual Abr/26 pg 5: visão, membros sup/inf, mãos, polegar, alienação mental, anquilose cotovelo/punhos, mudez, surdez). R$70,44/MM p/ 33a no PDF v2. Cancela aos 75 anos. Carência 60d exceto acidente.",
         },
         "mag": {
             "disponivel": True,
@@ -234,60 +272,96 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "IPA COM MAJORAÇÃO + IFPD (2279)",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.076,
-            "min": 100_000, "max": 1_000_000,
+            "min": 100_000, "max": 1_700_000,
             "fonte": "calibrada",
-            "obs": "R$76,05/MM p/ 33a no PDF v2. Inclui IFPD (Invalidez Funcional Permanente por Doença) — versão estendida usada na planilha calculadora Stoa. Idade 16-65, vitalício. Abdica do 769.",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (cap auto invalidez por idade)",
+            "idade_corte_anos": None,
+            "obs": "Inclui IFPD (Invalidez Funcional Permanente por Doença) — versão estendida usada na planilha calculadora Stoa. Cap auto: até 60a R$1,7MM; 61-65a R$1,2MM; 66-70a R$1MM. Idade 16-65 entrada, vitalício. Abdica do 769.",
         },
     },
 
-    # ── INVALIDEZ TOTAL POR ACIDENTE (IPTA Majorada) ─────────────────────
+    # ── IPTA MAJORADA (acidente) ─────────────────────────────────────────
     {
         "id": "invalidez_acidente",
-        "nome": "Invalidez Total por Acidente (IPTA Majorada)",
+        "nome": "Invalidez Permanente por Acidente — IPTA Majorada (12 eventos)",
         "tipo": "invalidez",
-        "descricao": "Indenização majorada quando a invalidez total é por acidente pessoal. AZOS oferece a versão Majorada.",
+        "descricao": "AZOS IPTA Majorada cobre 12 eventos de invalidez por ACIDENTE (perda total visão/membros/mãos/pés + polegar + alienação mental + anquilose cotovelo/punho + mudez/surdez), até R$3MM. MAG embute majoração no IPA+IFPD.",
         "anos_renda": 8,
-        "capital_min": 100_000, "capital_max": 1_000_000,
+        "capital_min": 100_000, "capital_max": 3_000_000,
         "azos": {
             "disponivel": True,
             "produto": "IPTA Majorada",
             "nome_no_portal": "Invalidez Total por Acidente",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.07,
-            "min": 100_000, "max": 1_000_000,
+            "min": 100_000, "max": 3_000_000,
             "fonte": "calibrada",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (lista oficial), pg 17 (capital máx por renda/idade)",
+            "idade_corte_anos": None,
+            "obs": "12 eventos cobertos. Cap absoluto R$3MM (sujeito a faixa renda/idade: 7-10k → 2MM, 15-20k → 3MM, etc). Vitalício enquanto pagar. Sem carência exceto franquia regular.",
         },
         "mag": {
             "disponivel": False,
-            "obs": "Majoração já inclusa na cobertura de Invalidez MAG — não isolável.",
+            "obs": "Majoração já inclusa no IPA+IFPD MAG — não isolável. Para acidente puro com majoração: rider 768 (IPA Majorada) + 769 (IFPD). 2279 já abdica do 769.",
+        },
+    },
+
+    # ── IPTA MAJORADA ESTENDIDA (exclusiva médico/dentista) ───────────────
+    {
+        "id": "ipta_majorada_estendida",
+        "nome": "IPTA Majorada Estendida (médico/dentista)",
+        "tipo": "invalidez",
+        "descricao": "AZOS exclusiva para médicos e dentistas. Antecipação do capital de IPTA Majorada para 3 eventos adicionais críticos pra carreira manual: perda de indicadores e imobilidade cervical/tóraco-lombo-sacro da coluna.",
+        "restricao_profissao": ["médico", "medico", "dentista", "cirurgião", "cirurgiao"],
+        "anos_renda": 5,
+        "capital_min": 100_000, "capital_max": 1_000_000,
+        "azos": {
+            "disponivel": True,
+            "produto": "IPTA Majorada Estendida",
+            "nome_no_portal": "Invalidez Total por Acidente Estendida",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.085,
+            "min": 100_000, "max": 1_000_000,
+            "fonte": "estimada",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (IPTA Maj Estendida — exclusiva médicos/dentistas)",
+            "idade_corte_anos": None,
+            "obs": "EXCLUSIVA pra médicos e dentistas. 3 eventos: perda total uso dos indicadores, imobilidade segmento cervical da coluna, imobilidade segmento tóraco-lombo-sacro. Capital é ANTECIPAÇÃO do IPTA Majorada — paga uma vez, reduz o IPTA na mesma quantia. Cap absoluto R$1MM.",
+        },
+        "mag": {
+            "disponivel": False,
+            "obs": "MAG não tem equivalente isolado. IPA + IFPD MAG cobre cervical/tóraco como parte da Invalidez Funcional por Doença, mas com franquia maior.",
         },
     },
 
     # ──────────────────────────────────────────────────────────────────────
-    # DOENÇAS GRAVES — 2 linhas (grupo_exclusivo "doencas_graves"):
-    #   - Básico (~13 doenças): AZOS DG13 + MAG Plus (10d)
-    #   - Completo (~30 doenças): AZOS DG30 + MAG Premium (28d)
+    # DOENÇAS GRAVES — 3 linhas:
+    #   - Essencial (~13 doenças): AZOS DG13 + MAG Plus (10 doenças, rider 3501)
+    #   - Completo (~28-30 doenças): AZOS DG30 + MAG Plus Premium (28 doenças)
+    #     (NOTA: MAG DG VITAL NÃO entra aqui — é rider câncer-only de 200k)
+    #   - Câncer Complementar (rider): MAG DG VITAL (200k, só câncer)
     # ──────────────────────────────────────────────────────────────────────
 
-    # ── DG — BÁSICO 13 ─────────────────────────────────────────────────────
+    # ── DG — ESSENCIAL 13 ──────────────────────────────────────────────────
     {
         "id": "doencas_graves_dg13",
-        "nome": "Doenças Graves — Básico (~13 doenças)",
+        "nome": "Doenças Graves — Essencial (13 doenças)",
         "tipo": "doenca",
         "grupo_exclusivo": "doencas_graves",
-        "grupo_titulo": "Doenças Graves — escolha o nível de cobertura por seguradora",
-        "descricao": "Cobertura básica (~13 doenças: câncer, AVC, infarto, transplantes etc). Capital pago em vida no diagnóstico.",
+        "grupo_titulo": "Doenças Graves — escolha 1 nível de cobertura",
+        "descricao": "Cobertura essencial. AZOS DG13: câncer (30%/50%/100%), AVC, infarto, Alzheimer, perda visão, paralisia membros, Parkinson, esclerose múltipla, osteomielite, embolia pulmonar, coma trauma craniano, doença neurônio motor, hepatite aguda fulminante. Capital pago em vida no diagnóstico.",
         "anos_renda": 3,
-        "capital_min": 100_000, "capital_max": 800_000,
+        "capital_min": 100_000, "capital_max": 1_000_000,
         "azos": {
             "disponivel": True,
             "produto": "Doenças Graves 13 (DG13)",
             "nome_no_portal": "Doenças Graves",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.308,
-            "min": 100_000, "max": 800_000,
+            "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
-            "obs": "R$153,95/500k p/ 33a no PDF v2. 13 doenças. Vende avulso. Reenquadramento anual. Sem vínculo com MQC, até R$1MM.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 5 (lista 13 eventos), pg 19 (capital por renda/idade)",
+            "idade_corte_anos": 75,
+            "obs": "R$153,95/500k p/ 33a no PDF v2. 13 doenças. Vende avulso. Reenquadramento anual. Sem vínculo com MQC. Cap absoluto R$1MM (sujeito a faixa renda/idade). Cancela aos 75 anos. Carência 60d.",
         },
         "mag": {
             "disponivel": True,
@@ -297,7 +371,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.332,
             "min": 100_000, "max": 500_000,
             "fonte": "calibrada",
-            "obs": "R$166,18/500k p/ 33a no PDF v2. 10 doenças. Reenquadramento a cada 5 anos (idade final 1 e 6). Câncer LMG sim. Sem vínculo MQC.",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (DG Linha Vida Toda + DPS = R$500k)",
+            "idade_corte_anos": None,
+            "obs": "R$166,18/500k p/ 33a no PDF v2. 10 doenças. Reenquadramento a cada 5 anos (idade final 1 e 6). Câncer LMG sim. Sem vínculo MQC. Cap R$500k Vida Toda DPS; R$1MM Linha Private com tele/exames.",
         },
     },
 
@@ -307,39 +383,72 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         "nome": "Doenças Graves — Completo (28-30 doenças)",
         "tipo": "doenca",
         "grupo_exclusivo": "doencas_graves",
-        "descricao": "Cobertura ampliada com 28-30 doenças. Versão mais completa, indicada quando o cliente tem antecedentes ou idade > 40.",
+        "descricao": "Cobertura ampliada com 28-30 doenças. AZOS DG30 adiciona às 13 anteriores: anemia aplásica, cirurgia de aorta/bypass/válvulas cardíacas, doenças hepáticas graves, lúpus sistêmico, perda de audição/fala, queimaduras graves, 7 tipos de transplante, tumor cerebral benigno. Versão mais completa, indicada quando cliente tem antecedentes ou idade > 40.",
         "anos_renda": 3,
-        "capital_min": 100_000, "capital_max": 800_000,
+        "capital_min": 100_000, "capital_max": 1_000_000,
         "azos": {
             "disponivel": True,
             "produto": "Doenças Graves 30 (DG30)",
             "nome_no_portal": "Doenças Graves",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.351,
-            "min": 100_000, "max": 800_000,
+            "min": 100_000, "max": 1_000_000,
             "fonte": "calibrada",
-            "obs": "R$175,60/500k p/ 33a no PDF v2. 30 doenças. Versão mais completa AZOS. Reenquadramento anual.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 6 (lista 30 eventos), pg 19 (capital por renda/idade)",
+            "idade_corte_anos": 75,
+            "obs": "R$175,60/500k p/ 33a no PDF v2. 30 doenças. Versão mais completa AZOS. Reenquadramento anual. Cap absoluto R$1MM (sujeito faixa renda/idade). Cancela aos 75 anos.",
         },
         "mag": {
             "disponivel": True,
-            "produto": "Doenças Graves Vital (3532) — versão completa",
-            "nome_no_portal": "DOENÇAS GRAVES VITAL (3532)",
+            "produto": "Doenças Graves Plus Premium (28 doenças, 28d) — rider 3501+",
+            "nome_no_portal": "DOENÇAS GRAVES PLUS PREMIUM (28 doenças)",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 0.590,
-            "min": 100_000, "max": 500_000,
+            "modelo_preco": "taxa", "taxa": 0.55,
+            "min": 100_000, "max": 1_000_000,
             "fonte": "estimada",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (Linha Private DG R$1MM)",
+            "idade_corte_anos": None,
             "cotacao_real": False,
-            "canal_mag": "DG VITAL específico (modelo dedicado)",
-            "obs": "Aparece no combobox de VIDA TODA VD STOA mas não é selecionável (estado read-only). Pertence a modelo de proposta dedicado, com fluxo separado em roadmap — por ora exibe prêmio estimado. Reenquadramento a cada 5 anos.",
+            "canal_mag": "PRIVATE Solutions",
+            "obs": "MAG DG Plus em versão Premium 28 doenças, disponível na Linha Private com tele/exames. Cap R$1MM. NÃO confundir com DG VITAL (rider câncer-only de 200k — linha 'doencas_graves_vital_cancer' separada). Reenquadramento a cada 5 anos.",
         },
     },
 
-    # ── CIRURGIAS ──────────────────────────────────────────────────────────
+    # ── DG VITAL (rider câncer-only complementar) ──────────────────────────
+    {
+        "id": "doencas_graves_vital_cancer",
+        "nome": "Câncer Complementar (rider DG VITAL)",
+        "tipo": "doenca",
+        "descricao": "Complemento RIDER do DG Plus/Modular. Cobre apenas câncer com qualidade superior (LMG, in situ) e capital máximo R$200k. NÃO substitui DG13/DG30 — é cobertura adicional pra reforçar câncer.",
+        "anos_renda": 1,
+        "capital_min": 50_000, "capital_max": 200_000,
+        "capital_padrao": 200_000,
+        "azos": {
+            "disponivel": False,
+            "obs": "AZOS não tem rider câncer-only equivalente. DG13/DG30 já cobrem câncer (30%/50%/100%) no capital principal.",
+        },
+        "mag": {
+            "disponivel": True,
+            "produto": "Doenças Graves Vital (3532) — rider câncer 200k",
+            "nome_no_portal": "DOENÇAS GRAVES VITAL (3532)",
+            "modalidade": "tradicional",
+            "modelo_preco": "taxa", "taxa": 0.45,
+            "min": 50_000, "max": 200_000,
+            "fonte": "estimada",
+            "fonte_pdf": "input do produto (Manual MAG 2026 oficial pendente)",
+            "idade_corte_anos": None,
+            "cotacao_real": False,
+            "canal_mag": "rider de DG Plus ou Modular (modelo dedicado)",
+            "obs": "RIDER de DG Plus/Modular. Câncer ONLY. Capital máximo R$200k. Custo baixo. Estado read-only no combobox de VIDA TODA VD STOA pq exige DG Plus já contratado. Reenquadramento a cada 5 anos.",
+        },
+    },
+
+    # ── CIRURGIAS 2.0 ──────────────────────────────────────────────────────
     {
         "id": "cirurgias",
-        "nome": "Cirurgias",
+        "nome": "Cirurgias 2.0",
         "tipo": "saude",
-        "descricao": "Indenização por procedimentos cirúrgicos listados (TUSS). AZOS Cirurgia 2.0 cobre até R$100k (limite maior do mercado AZOS).",
+        "descricao": "Indenização por procedimentos cirúrgicos listados (TUSS). AZOS Cirurgias 2.0 cobre até R$100k. Indeniza 10/20/50/100% do CS conforme tabela do procedimento. MAG Cirurgias + Amparo adiciona valor mensal durante recuperação.",
         "anos_renda": 2,
         "capital_min": 50_000, "capital_max": 200_000,
         "azos": {
@@ -350,7 +459,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "taxa", "taxa": 0.18,
             "min": 50_000, "max": 100_000,
             "fonte": "estimada",
-            "obs": "652 cirurgias cobertas. Capital até R$100k (Cirurgia 2.0 dobra o limite). Indeniza 10/20/50/100% do CS.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (Cirurgias 2.0), pg 8 (10/20/50/100%), pg 14 (cap R$100k)",
+            "idade_corte_anos": 70,
+            "obs": "652 cirurgias cobertas. Capital até R$100k. Indeniza 10/20/50/100% do CS conforme procedimento. Carência 180d exceto acidente. Cancela aos 70 anos.",
         },
         "mag": {
             "disponivel": True,
@@ -358,32 +469,36 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "CIRURGIAS + AMPARO (3511)",
             "modalidade": "tradicional",
             "modelo_preco": "taxa", "taxa": 0.25,
-            "min": 50_000, "max": 200_000,
+            "min": 50_000, "max": 50_000,  # cap auto MAG R$50k (pg 8)
             "fonte": "estimada",
-            "obs": "917 cirurgias + amparo financeiro durante recuperação.",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (Cirurgias automático R$50k)",
+            "idade_corte_anos": None,
+            "obs": "917 cirurgias + amparo financeiro durante recuperação. Cap automático R$50k (Vida Toda). Capital maior exige análise individual.",
         },
     },
 
-    # ── QUEBRA DE OSSOS (REF AZOS) ─────────────────────────────────────────
+    # ── RUPTURAS E FRATURAS (REF AZOS) ─────────────────────────────────────
     {
         "id": "quebra_ossos",
-        "nome": "Quebra de Ossos (Rupturas e Fraturas)",
+        "nome": "Rupturas e Fraturas (REF) — quebra de ossos",
         "tipo": "acidente",
         "modalidade": "tradicional",
-        "descricao": "Indenização por fraturas ósseas e rupturas de tendões/ligamentos por acidente. Cobertura nova AZOS (REF, lançada em 2025).",
+        "descricao": "Indenização por fraturas ósseas e rupturas de tendões/ligamentos por acidente. Cobertura AZOS (REF, lançada em 2025). Até R$300k. Reintegração de capital a cada 12 meses. Indeniza 5%-100% por evento conforme tabela.",
         "anos_renda": 0,
-        "capital_min": 5_000, "capital_max": 50_000,
-        "capital_padrao": 15_000,
+        "capital_min": 5_000, "capital_max": 300_000,
+        "capital_padrao": 50_000,
         "unidade": "Capital (R$)",
         "azos": {
             "disponivel": True,
             "produto": "Rupturas e Fraturas (REF)",
             "nome_no_portal": "Rupturas",
             "modalidade": "tradicional",
-            "modelo_preco": "taxa", "taxa": 1.20,
-            "min": 5_000, "max": 50_000,
+            "modelo_preco": "taxa", "taxa": 0.45,
+            "min": 5_000, "max": 300_000,
             "fonte": "estimada",
-            "obs": "Cobertura AZOS (out/2025). Fraturas ósseas, rupturas de tendões e ligamentos.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (Rupturas e Fraturas), pg 8-9 (5%-100%), pg 14 (cap R$300k)",
+            "idade_corte_anos": 75,
+            "obs": "Cobertura AZOS. Fraturas ósseas + rupturas de tendões e ligamentos. Cap absoluto R$300k. Reintegração 12 meses. Sem carência. Cancela aos 75 anos.",
         },
         "mag": {
             "disponivel": False,
@@ -396,7 +511,7 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         "id": "internacao_hospitalar",
         "nome": "Diária de Internação Hospitalar (DIH)",
         "tipo": "hospitalar",
-        "descricao": "Indenização diária enquanto internado. Triplica em UTI. AZOS vende avulso (raro no mercado).",
+        "descricao": "Indenização diária enquanto internado. Em UTI/CTI a indenização equivale a 3 diárias contratadas. AZOS: 200 diárias por evento, 1000 total. MAG: 250 diárias por evento (Suporte 250) ou 150 (Suporte 150).",
         "anos_renda": 0,
         "capital_min": 100, "capital_max": 1_000,
         "capital_padrao": 300,
@@ -409,7 +524,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "modelo_preco": "por_unidade", "taxa": 0.0513,
             "min": 100, "max": 1_000,
             "fonte": "calibrada",
-            "obs": "R$51,30 p/ R$1k de diária (PDF v2). 200 diárias por evento. Franquia 72h. Triplica em UTI. Vende avulso. Reajuste anual.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 7 (200 diárias/evento, 1000 vida, UTI×3), pg 19 (cap por renda)",
+            "idade_corte_anos": 70,
+            "obs": "R$51,30 p/ R$1k de diária (PDF v2). 200 diárias por evento, 1000 vida. Franquia 72h retroativa. UTI = 3 diárias. Cap absoluto R$1k/diária (R$500 se 61-65). Cancela aos 70 anos.",
         },
         "mag": {
             "disponivel": True,
@@ -417,9 +534,11 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "DIÁRIA POR INTERNAÇÃO HOSPITALAR + SUPORTE 250 (3510)",
             "modalidade": "tradicional",
             "modelo_preco": "por_unidade", "taxa": 0.0647,
-            "min": 100, "max": 1_000,
+            "min": 100, "max": 3_000,
             "fonte": "calibrada",
-            "obs": "R$64,68 p/ R$1k (PDF v2). 250 diárias por evento. Franquia 4 dias. Triplica em UTI. Alternativa: '+ SUPORTE 150 (3509)' com 150 diárias.",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (DIH R$3k sem UTI / R$9k com Adicional UTI 200%)",
+            "idade_corte_anos": None,
+            "obs": "R$64,68 p/ R$1k (PDF v2). 250 diárias/evento. Franquia 4 dias. UTI = 3 diárias. Cap auto R$3k/diária (sem UTI). Com Adicional UTI sobe pra R$9k/diária (200%). Alternativa Suporte 150 (3509) = 150 diárias.",
         },
     },
 
@@ -428,9 +547,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
         "id": "renda_incapacidade",
         "nome": "Renda por Incapacidade Temporária (RIT / DIT)",
         "tipo": "renda",
-        "descricao": "Indenização diária enquanto afastado por doença ou acidente. AZOS chama de RIT, MAG/mercado chama de DIT. AZOS é a vencedora desta categoria no PDF v2.",
+        "descricao": "Indenização diária enquanto afastado por doença ou acidente. AZOS chama de RIT, MAG chama de DIT. AZOS RIT: 120 diárias pra LER/DORT/hérnia/diálise/cirrose, 730 demais. MAG DIT por grupo de risco profissional.",
         "anos_renda": 0,
-        "capital_min": 100, "capital_max": 600,
+        "capital_min": 100, "capital_max": 1_000,
         "capital_padrao": 300,
         "unidade": "R$/dia",
         "azos": {
@@ -439,9 +558,11 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "Renda por Incapacidade",
             "modalidade": "tradicional",
             "modelo_preco": "por_unidade", "taxa": 0.272,
-            "min": 100, "max": 600,
+            "min": 100, "max": 1_000,
             "fonte": "calibrada",
-            "obs": "R$/dia de afastamento. Portal AZOS aceita até R$ 600/dia. Limite 730 dias. Hérnia de disco sim. Doenças por vetores sim. Cobertura mesmo inadimplente sim. Abrangência global. Vencedora da categoria no PDF v2.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 7 (120 diárias LER/etc + 730 demais), pg 20 (cap: 1/30 salário, R$1k máx, R$500 se 61-65)",
+            "idade_corte_anos": 70,
+            "obs": "R$/dia de afastamento. Cap = min(1/30 do salário, R$1k até 60 anos, R$500 entre 61-65). Limite 730 dias eventos gerais; 120 dias LER/DORT/hérnia/diálise/cirrose. Hérnia de disco sim. Doenças por vetores sim. Cancela aos 70 anos. Vencedora da categoria no PDF v2.",
         },
         "mag": {
             "disponivel": True,
@@ -449,9 +570,11 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "nome_no_portal": "DIT + MAC + IPAM 10 DIAS (2398)",
             "modalidade": "tradicional",
             "modelo_preco": "por_unidade", "taxa": 0.30,
-            "min": 100, "max": 600,
+            "min": 100, "max": 1_333,  # R$40k/mês ÷ 30 = R$1.333/dia (Grupo Risco 0)
             "fonte": "estimada",
-            "obs": "R$/dia. Combina DIT (incapacidade temporária) + MAC (morte acidental) + IPAM (invalidez parcial acidente major). Franquia 10 dias. Alternativas: DIT + MQC 10 DIAS (2399) com Morte Qualquer Causa, ou versões 7 DIAS (2396/2397).",
+            "fonte_pdf": "Dicas Underwriting MAG Ago/23 pg 8 (DIT/DITA por grupo risco profissão)",
+            "idade_corte_anos": None,
+            "obs": "R$/dia. Combina DIT + MAC + IPAM. Franquia 10 dias. Cap por grupo de risco profissional: Grupo 0 R$40k/mês (R$1.333/dia), Grupo 1 R$30k (R$1k/dia), Grupos 2-3 R$20k (R$666/dia). Alternativas: DIT + MQC 10 DIAS (2399) ou versões 7 DIAS (2396/2397).",
         },
     },
 
@@ -482,7 +605,9 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "capital_fixo": 15_000,
             "min": 15_000, "max": 15_000,
             "fonte": "estimada",
-            "obs": "Capital fixo R$15.000. Sem carência. Reembolso de despesas até o limite.",
+            "fonte_pdf": "Manual Azos Abr/26 pg 4 (4 modalidades), pg 9 (Individual/Familiar/+Pais/+Sogros), pg 14 (cap fixo R$15k)",
+            "idade_corte_anos": None,
+            "obs": "Capital fixo R$15.000. Sem carência (titular). Pais/sogros: 120 dias carência. Traslado nacional e internacional sem limite km. Inclui urna, veículo, capela, cremação, flores, sepultamento, locação de jazigo. Titular: 18-65; com extensão Pais/Sogros titular até 55.",
         },
         "mag": {
             "disponivel": False,
@@ -517,6 +642,8 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "capital_fixo": 5_500,
             "min": 5_500, "max": 5_500,
             "fonte": "calibrada",
+            "fonte_pdf": "Catálogo MAG VD STOA + PDF Stoa v2 (SAF Essencial Familiar + Pais e Sogros)",
+            "idade_corte_anos": None,
             "obs": "Capital fixo R$5.500 (PDF v2). Idade entrada 16-95. Sem carência. Translado nacional.",
         },
     },
@@ -547,6 +674,8 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "capital_fixo": 10_000,
             "min": 10_000, "max": 10_000,
             "fonte": "estimada",
+            "fonte_pdf": "Catálogo MAG VD STOA + PDF Stoa v2 (SAF Plus)",
+            "idade_corte_anos": None,
             "obs": "Capital fixo R$10.000 (PDF v2). Inclui titular + cônjuge + filhos + pais + sogros. Translado América Latina. Sem carência. Variações no portal: 3062 (Individual), 3063 (Familiar), 3064 (+Pais).",
         },
     },
@@ -577,13 +706,16 @@ _LINHAS_COMPARATIVAS: list[dict] = [
             "capital_fixo": 15_000,
             "min": 15_000, "max": 15_000,
             "fonte": "estimada",
+            "fonte_pdf": "Catálogo MAG VD STOA + PDF Stoa v2 (SAF Premium)",
+            "idade_corte_anos": None,
             "obs": "Capital fixo R$15.000 (PDF v2). Translado internacional ilimitado. Funeral pet. Sem carência. Variações no portal: 3066 (Individual), 3067 (Familiar), 3068 (+Pais).",
         },
     },
 ]
 
 
-def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
+def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix",
+                      modo_simplificado: str = "") -> dict:
     """
     Devolve o grid comparativo AZOS × MAG por linha conceitual.
 
@@ -626,6 +758,12 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
         # Renda alta tende a precisar de Whole Life pra sucessão patrimonial.
         # Term Life ainda fica como alternativa que o LP pode ativar manual.
         principais_por_grupo["morte"] = "morte_whole_life"
+    # Modo MVP "vitalicio_sem_resgate" (Stoa, Eduardo): força Whole Life
+    # e desabilita Term Life/Tradicional como principais. Reduz complexidade
+    # de planejamento — recomendado pra maior parte da população.
+    if modo_simplificado == "vitalicio_sem_resgate":
+        if "morte" in principais_por_grupo:
+            principais_por_grupo["morte"] = "morte_whole_life"
 
     linhas = []
     for L in _LINHAS_COMPARATIVAS:
@@ -709,6 +847,17 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
         if ge and principais_por_grupo.get(ge) != L["id"]:
             ativo_default = False
 
+        # Linhas com restricao_profissao só ativam por default se a profissão
+        # do cliente combina (ex: IPTA Estendida exclusiva médico/dentista).
+        # O LP ainda pode ativar manualmente — só não conta no subtotal default.
+        restr = L.get("restricao_profissao") or []
+        if restr:
+            import re as _re
+            prof = str(cliente.get("profissao") or "").lower()
+            pattern = "|".join(_re.escape(s) for s in restr)
+            if not (prof and _re.search(pattern, prof)):
+                ativo_default = False
+
         linhas.append({
             "id":             L["id"],
             "nome":           L["nome"],
@@ -727,15 +876,174 @@ def planejamento_grid(cliente: dict, tipo_cobertura: str = "mix") -> dict:
             "mag":            mag,
         })
 
-    return {
+    # Aviso global Privet se Whole Life é a principal e capital < R$1MM
+    # (prêmio mensal mínimo Privet = R$400 → ajustar capital ou modelo)
+    avisos_modelo = []
+    if principais_por_grupo.get("morte") == "morte_whole_life":
+        for L in linhas if False else _LINHAS_COMPARATIVAS:
+            if L["id"] != "morte_whole_life":
+                continue
+            mag = L.get("mag") or {}
+            if mag.get("aviso_privet"):
+                avisos_modelo.append({
+                    "nivel":    "aviso",
+                    "linha_id": "morte_whole_life",
+                    "mensagem": mag.get("aviso_privet"),
+                })
+
+    grid = {
         "cliente": {
             "nome":           cliente.get("nome", ""),
             "idade":          idade,
             "renda_mensal":   renda,
             "tipo_cobertura": tipo_cobertura,
+            "profissao":      cliente.get("profissao", ""),
         },
+        "modo_simplificado": modo_simplificado or None,
+        "avisos_modelo": avisos_modelo,
         "linhas": linhas,
     }
+
+    # ── Aplica clamps oficiais (renda/idade/profissão) e gera avisos do
+    # auditor. Mantém capital_sugerido intocado — só ajusta capital_aplicado
+    # por seguradora e marca avisos pro LP ver "por quê" no resumo.
+    try:
+        from automacao.auditor_catalogo import aplicar_clamps_no_grid, auditar_planejamento
+        grid = aplicar_clamps_no_grid(cliente, grid)
+        grid["avisos_auditor"] = auditar_planejamento(cliente, grid)
+    except Exception as e:  # noqa: BLE001
+        grid["avisos_auditor"] = [{
+            "nivel": "aviso",
+            "linha_id": "_global",
+            "mensagem": f"auditor falhou: {e}",
+        }]
+
+    # ── Aplica template profissional (Polícia, Piloto, Médico, etc) ──────
+    try:
+        from automacao.profissoes import aplicar_template_na_grid
+        grid = aplicar_template_na_grid(cliente, grid)
+    except Exception as e:  # noqa: BLE001
+        grid["template_profissao"] = {
+            "id": None,
+            "rotulo": "Falha na detecção",
+            "erro": str(e)[:200],
+        }
+    return grid
+
+
+def relatorio_catalogo() -> dict:
+    """Wrapper para o endpoint /diagnostico/catalogo — roda o auditor estático
+    contra _LINHAS_COMPARATIVAS e devolve o relatório."""
+    from automacao.auditor_catalogo import auditar_catalogo
+    return auditar_catalogo(_LINHAS_COMPARATIVAS)
+
+
+def gerar_resumo_auditavel(cliente: dict, grid: dict) -> str:
+    """Gera markdown explicando por que cada linha foi escolhida + as fontes
+    PDF citadas. Vai pro UI do LP (Tela 4) e pode ser copiado pra apresentar
+    ao cliente.
+
+    Inclui:
+      - Header com perfil do cliente + template profissional detectado
+      - Lista de linhas ATIVAS com: seguradora escolhida, capital, prêmio,
+        motivo do clamp (se houve) e fonte PDF
+      - Avisos do auditor com fontes
+      - Rodapé com as fontes oficiais usadas (Manual Azos + Dicas MAG)
+    """
+    import io
+    out = io.StringIO()
+    cli = grid.get("cliente") or {}
+    tpl = grid.get("template_profissao") or {}
+    avisos = grid.get("avisos_auditor") or []
+    avisos_modelo = grid.get("avisos_modelo") or []
+    modo = grid.get("modo_simplificado") or "completo"
+
+    # ── Header ────────────────────────────────────────────────────────────
+    nome = cli.get("nome") or "—"
+    out.write(f"# Planejamento Blend Seguros — {nome}\n\n")
+    out.write(f"**Idade:** {cli.get('idade','?')} anos   ")
+    out.write(f"**Renda mensal:** R$ {float(cli.get('renda_mensal') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", "."))
+    out.write(f"   **Profissão:** {cli.get('profissao') or '—'}\n\n")
+    out.write(f"**Tipo de cobertura:** {cli.get('tipo_cobertura','mix')}   ")
+    out.write(f"**Modo:** {modo}\n\n")
+    if tpl.get("rotulo"):
+        out.write(f"**Template profissional detectado:** {tpl.get('rotulo')}\n")
+        if tpl.get("modelo_mag_obs"):
+            out.write(f"> {tpl.get('modelo_mag_obs')}\n")
+        if tpl.get("azos_obs"):
+            out.write(f"> AZOS — {tpl.get('azos_obs')}\n")
+        out.write("\n")
+
+    # ── Avisos globais (modelo + auditor) ─────────────────────────────────
+    if avisos_modelo or avisos:
+        out.write("## ⚠ Avisos do Auditor\n\n")
+        for a in avisos_modelo + avisos:
+            nivel = a.get("nivel", "aviso").upper()
+            out.write(f"- **[{nivel}]** _{a.get('linha_id','')}_: {a.get('mensagem','')}\n")
+        out.write("\n")
+
+    # ── Linhas escolhidas ─────────────────────────────────────────────────
+    out.write("## Coberturas escolhidas\n\n")
+    fontes_citadas: set[str] = set()
+    for L in grid.get("linhas", []):
+        if not L.get("ativo_default"):
+            continue
+        esc = L.get("escolhido_default")
+        seg = L.get(esc) if esc else None
+        if not seg or not seg.get("disponivel"):
+            # Sem seguradora escolhida — pula
+            continue
+        produto = seg.get("produto") or L.get("nome")
+        cap = seg.get("capital_aplicado") or L.get("capital_sugerido")
+        premio = seg.get("premio_estimado")
+        fonte_pdf = seg.get("fonte_pdf", "(fonte não declarada)")
+        if fonte_pdf and fonte_pdf != "(fonte não declarada)":
+            fontes_citadas.add(fonte_pdf)
+        out.write(f"### {L.get('nome')}\n")
+        out.write(f"- **Seguradora:** {esc.upper()} — {produto}\n")
+        unidade = L.get("unidade") or "R$"
+        if "R$/dia" in unidade:
+            out.write(f"- **Capital:** R$ {cap:,}/dia\n".replace(",", "."))
+        elif "Capital fixo" in unidade:
+            out.write(f"- **Capital:** R$ {cap:,} (fixo)\n".replace(",", "."))
+        else:
+            out.write(f"- **Capital:** R$ {cap:,}\n".replace(",", "."))
+        if premio:
+            out.write(f"- **Prêmio estimado:** R$ {premio:.2f}/mês\n")
+        if seg.get("clamp_motivo"):
+            out.write(f"- **Clamp:** {seg['clamp_motivo']}\n")
+        if seg.get("capital_original") and seg.get("capital_original") != cap:
+            out.write(f"  - Capital original calculado: R$ {seg['capital_original']:,}\n".replace(",", "."))
+        if seg.get("aviso_privet"):
+            out.write(f"- **⚠ {seg['aviso_privet']}**\n")
+        if seg.get("obs"):
+            out.write(f"- _Obs:_ {seg['obs']}\n")
+        out.write(f"- **Fonte:** {fonte_pdf}\n\n")
+
+    # ── Linhas opcionais (visíveis mas inativas por default) ──────────────
+    inativas = [L for L in grid.get("linhas", []) if not L.get("ativo_default")]
+    if inativas:
+        out.write("## Coberturas disponíveis (não ativas por padrão)\n\n")
+        for L in inativas:
+            linhas_seg = []
+            for seg in ("azos", "mag"):
+                info = L.get(seg) or {}
+                if info.get("disponivel"):
+                    cap = info.get("capital_aplicado") or "—"
+                    pm  = info.get("premio_estimado")
+                    pm_txt = f"R$ {pm:.2f}/mês" if pm else "—"
+                    linhas_seg.append(f"{seg.upper()}: R$ {cap:,} ({pm_txt})".replace(",", "."))
+                elif info.get("motivo_indisponivel"):
+                    linhas_seg.append(f"{seg.upper()}: indisponível ({info['motivo_indisponivel'][:80]})")
+            out.write(f"- **{L.get('nome')}** — {' | '.join(linhas_seg) or 'sem oferta'}\n")
+        out.write("\n")
+
+    # ── Fontes oficiais usadas ────────────────────────────────────────────
+    if fontes_citadas:
+        out.write("## Fontes oficiais\n\n")
+        for f in sorted(fontes_citadas):
+            out.write(f"- {f}\n")
+    return out.getvalue()
 
 
 # Mantido por compat com código que ainda usa este import
